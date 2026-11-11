@@ -7,6 +7,11 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -525,15 +530,12 @@ private fun md(s: String): androidx.compose.ui.text.AnnotatedString {
 
 @Composable
 private fun TypingDots() {
-    val t = androidx.compose.animation.core.rememberInfiniteTransition(label = "dots")
+    val t = rememberInfiniteTransition(label = "dots")
     Row(horizontalArrangement = Arrangement.spacedBy(5.dp), modifier = Modifier.padding(vertical = 6.dp)) {
         repeat(3) { i ->
             val a by t.animateFloat(
                 0.2f, 1f,
-                androidx.compose.animation.core.infiniteRepeatable(
-                    androidx.compose.animation.core.tween(500, delayMillis = i * 150),
-                    androidx.compose.animation.core.RepeatMode.Reverse,
-                ),
+                infiniteRepeatable(tween(500, delayMillis = i * 150), RepeatMode.Reverse),
                 label = "d$i",
             )
             Box(Modifier.size(8.dp).clip(CircleShape).background(C.Red.copy(alpha = a)))
