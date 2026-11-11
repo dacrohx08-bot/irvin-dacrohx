@@ -318,6 +318,8 @@ private val SUGGESTIONS = listOf(
     "¿Qué sabes de mí?",
     "Recuérdame en 10 minutos tomar agua",
     "Pon música de mi teléfono",
+    "¿Cómo va a estar el clima hoy?",
+    "Dame la receta de chilaquiles verdes",
     "Prende la linterna",
     "¿Cuánta batería tengo?",
     "Cuánto es el 15% de 1,280",
@@ -803,6 +805,24 @@ fun SettingsScreen(vm: Assistant, brain: BrainState) {
 
         Label("Velocidad")
         SpeedPanel(vm, s)
+
+        Label("Internet")
+        Panel {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Usar internet cuando haya", color = C.Txt, fontSize = 16.sp)
+                    Text(
+                        "Para noticias, clima, dólar, buscar en la web y leer páginas. Sin conexión, Irvin sigue funcionando offline.",
+                        color = C.Mut, fontSize = 13.sp,
+                    )
+                }
+                Switch(s.useInternet, { v -> vm.store.updateSettings { it.copy(useInternet = v) } }, colors = SwitchDefaults.colors(checkedTrackColor = C.Red))
+            }
+            Text(
+                if (vm.online.connected()) "● Conectado" else "○ Sin conexión ahora",
+                color = if (vm.online.connected()) C.Ok else C.Mut, fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp),
+            )
+        }
 
         Label("Manos libres · “Oye Irvin”")
         WakePanel(vm, s.wakeWord)

@@ -76,7 +76,7 @@ class Brain(private val ctx: Context) {
                     backend = a.backend(),
                     visionBackend = if (a.multimodal) Backend.GPU() else null,
                     audioBackend = if (a.multimodal) Backend.CPU() else null,
-                    maxNumTokens = 4096,
+                    maxNumTokens = 6144,
                     cacheDir = ctx.cacheDir.absolutePath,
                 )
                 val e = Engine(cfg)

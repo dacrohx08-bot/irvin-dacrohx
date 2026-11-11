@@ -71,6 +71,7 @@ class Assistant private constructor(private val app: Application) {
     val recorder = VoiceRecorder()
     val music = com.irvin.dacrohx.device.MusicPlayer(app)
     val turbo = ModelManager(app, ModelManager.E2B)
+    val online = com.irvin.dacrohx.device.Online(app)
 
     /** El modelo que se usa: el turbo si está activado y descargado. */
     private fun activeModel(): ModelManager =
@@ -159,7 +160,7 @@ class Assistant private constructor(private val app: Application) {
         bootBrain()
     }
 
-    private fun tools() = IrvinTools(getApplication(), store, device, ir, music) { label ->
+    private fun tools() = IrvinTools(getApplication(), store, device, ir, music, online) { label ->
         currentReplyId?.let { id -> store.updateChat(id) { it.copy(actions = it.actions + label) } }
     }
 
@@ -172,14 +173,15 @@ class Assistant private constructor(private val app: Application) {
             .ifEmpty { "(ninguno)" }
         val user = s.name.ifBlank { "tu usuario" }
         return """
-Eres IRVIN DACROHX, asistente personal de $user en su teléfono RedMagic 11 Pro. Funcionas sin internet.
+Eres IRVIN DACROHX, asistente personal de $user en su teléfono RedMagic 11 Pro. Tu cerebro corre en el teléfono (funcionas sin internet) y cuando hay conexión puedes consultar internet con tus herramientas.
 Personalidad: ${s.persona}
 Reglas:
 - Español de México, natural y BREVE (1-3 frases) salvo que pida detalle. Se escucha en voz alta: sin tablas ni listas largas.
 - Audio = el usuario hablándote; responde a lo que dijo. Imagen = analízala.
 - Si algo requiere una acción, usa la herramienta. NUNCA digas que hiciste algo (poner música, guardar, programar, abrir) si no usaste la herramienta y esta no confirmó. Si no tienes herramienta para algo, dilo.
 - Datos personales que valga la pena recordar → guardar_recuerdo. "Recuérdame…" → recordatorio_en_minutos/recordatorio_en_fecha. Música → reproducir_musica. Cuentas → calcular.
-- Sin internet: no tienes noticias, clima ni web.
+- Conocimiento general (recetas, cómo hacer algo, explicaciones, traducciones): responde tú, no necesitas internet. Para recetas o instrucciones sí puedes extenderte con pasos claros.
+- Datos actuales (noticias, clima, precios, dólar, resultados, horarios, algo reciente): usa las herramientas de INTERNET. Si responden SIN_INTERNET, dilo y no inventes.
 Inicio: $now (cada mensaje trae la hora entre corchetes).
 Sabes del usuario:
 $mem

@@ -43,6 +43,7 @@ data class Settings(
     val pitch: Float = 1.0f,
     val fastVoice: Boolean = true,
     val turbo: Boolean = false,
+    val useInternet: Boolean = true,
 )
 
 val PERSONAS = listOf(
@@ -156,6 +157,7 @@ class Store private constructor(private val ctx: Context) {
             .putFloat("pitch", s.pitch)
             .putBoolean("fastVoice", s.fastVoice)
             .putBoolean("turbo", s.turbo)
+            .putBoolean("useInternet", s.useInternet)
             .apply()
     }
 
@@ -170,6 +172,7 @@ class Store private constructor(private val ctx: Context) {
         pitch = prefs.getFloat("pitch", 1.0f),
         fastVoice = prefs.getBoolean("fastVoice", true),
         turbo = prefs.getBoolean("turbo", false),
+        useInternet = prefs.getBoolean("useInternet", true),
     )
 
     // ---------------- persistencia JSON ----------------

@@ -24,6 +24,7 @@ class IrvinTools(
     private val device: DeviceActions,
     private val ir: IrBlaster,
     private val music: MusicPlayer,
+    private val online: com.irvin.dacrohx.device.Online,
     private val onAction: (String) -> Unit,
 ) : ToolSet {
 
@@ -191,6 +192,43 @@ class IrvinTools(
         onAction("🔊 $v%")
         return "Volumen al $v%."
     }
+
+    private fun net(label: String, block: () -> String): String {
+        if (!store.settings.value.useInternet) return "El usuario desactivó el uso de internet en Ajustes. Responde sin internet."
+        onAction("🌐 $label")
+        return block()
+    }
+
+    @Tool(description = "INTERNET: busca en la web información actual (precios, horarios, resultados, lugares, cualquier dato reciente). Solo funciona con conexión.")
+    fun buscarEnInternet(
+        @ToolParam(description = "Qué buscar.") consulta: String,
+    ): String = net("Búsqueda") { online.search(consulta) }
+
+    @Tool(description = "INTERNET: lee el texto de una página web (por ejemplo un resultado de búsqueda) para dar detalles.")
+    fun leerPagina(
+        @ToolParam(description = "La dirección web.") url: String,
+    ): String = net("Leyendo página") { online.readPage(url) }
+
+    @Tool(description = "INTERNET: clima actual y pronóstico de 3 días de una ciudad.")
+    fun clima(
+        @ToolParam(description = "Ciudad, ej: Ciudad de México.") ciudad: String,
+    ): String = net("Clima") { online.weather(ciudad) }
+
+    @Tool(description = "INTERNET: titulares de noticias recientes de México o de un tema.")
+    fun noticias(
+        @ToolParam(description = "Tema, o 'principales' para las noticias del día.") tema: String,
+    ): String = net("Noticias") { online.news(tema) }
+
+    @Tool(description = "INTERNET: resumen de Wikipedia sobre una persona, lugar o tema.")
+    fun wikipedia(
+        @ToolParam(description = "El tema.") tema: String,
+    ): String = net("Wikipedia") { online.wikipedia(tema) }
+
+    @Tool(description = "INTERNET: tipo de cambio actual entre monedas (USD, MXN, EUR...).")
+    fun tipoDeCambio(
+        @ToolParam(description = "Moneda origen, ej: USD") de: String,
+        @ToolParam(description = "Moneda destino, ej: MXN") a: String,
+    ): String = net("Tipo de cambio") { online.exchange(de, a) }
 
     @Tool(description = "Guarda cómo quiere el usuario que lo llames (su nombre o apodo).")
     fun guardarNombre(
