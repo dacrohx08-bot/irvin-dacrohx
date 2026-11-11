@@ -547,7 +547,7 @@ fun ChatScreen(vm: Assistant, mode: Mode, brain: BrainState) {
                 mode == Mode.THINKING || mode == Mode.SPEAKING ->
                     RoundIcon(Icons.Filled.Stop, "Detener", bg = C.Panel2) { vm.stopAll() }
                 input.isNotBlank() || image != null || doc != null ->
-                    RoundIcon(Icons.AutoMirrored.Filled.Send, "Enviar", bg = C.Red) { vm.sendText(input); input = "" }
+                    RoundIcon(Icons.AutoMirrored.Filled.Send, "Enviar", bg = C.Red) { vm.endVoiceTurn(); vm.sendText(input); input = "" }
                 else ->
                     RoundIcon(Icons.Filled.Mic, "Hablar", bg = if (mode == Mode.LISTENING) C.Red else C.Panel2, big = true) { vm.toggleListening() }
             }

@@ -498,7 +498,8 @@ $rem
                 if (r == "\u200B") return
                 store.addChat(ChatMsg(role = "user", text = t))
                 store.addChat(ChatMsg(role = "model", text = r, actions = listOf("⚡ instantáneo")))
-                if (store.settings.value.autoSpeak) speaker.say(r, flush = true)
+                if (store.settings.value.autoSpeak || voiceTurn) speaker.say(r, flush = true)
+                followUpInApp(r)
                 return
             }
         }
@@ -609,6 +610,7 @@ $rem
             }
             if (autoSpeak && failed == null) speaker.finish()
             lastReplyText = if (failed == null) finalText else null
+            if (!forceSpeak && failed == null) followUpInApp(finalText) else if (!forceSpeak) voiceTurn = false
             currentReplyId = null
             _mode.value = if (speaker.speaking.value) Mode.SPEAKING else Mode.IDLE
         }
@@ -733,7 +735,7 @@ $rem
         micBusy = false
         _partialSpeech.value = ""
         _mode.value = Mode.IDLE
-        if (!text.isNullOrBlank()) sendText(text)
+        if (!text.isNullOrBlank()) { voiceTurn = true; sendText(text) }
     }
 
     // ------------------------------------------------------------------ imagen
@@ -847,47 +849,79 @@ $rem
     }
 
     /** Manos libres con texto ya reconocido por el oído offline (más rápido que mandar audio). */
-    suspend fun handsFreeText(command: String) {
+    /** Procesa una orden hablada. Devuelve true si Irvin quedó esperando respuesta (hizo una pregunta). */
+    suspend fun handsFreeText(command: String): Boolean {
         if (!brain.ready && models.isReady()) speaker.say("Dame un segundo, estoy despertando.", flush = true)
         if (!ensureBrain()) {
             speaker.say("Todavía no tengo cerebro instalado. Abre la app primero.", flush = true)
-            return
+            return false
         }
-        if (genJob?.isActive == true) return
+        if (genJob?.isActive == true) return false
         quickCommand(command)?.let { r ->
-            if (r == "\u200B") return
+            if (r == "\u200B") { waitSpeech(); return false }
             store.addChat(ChatMsg(role = "user", text = "🎙️ $command"))
             store.addChat(ChatMsg(role = "model", text = r, actions = listOf("⚡ instantáneo")))
             speaker.say(r, flush = true)
-            return
+            waitSpeech()
+            return expectsAnswer(r)
         }
         micBusy = true
         val parts = listOf(Content.Text(command))
         val job = run(ChatMsg(role = "user", text = "🎙️ $command", kind = "voice"), parts, forceSpeak = true)
         job?.join()
-        kotlinx.coroutines.delay(300)
-        speaker.speaking.first { !it }
+        waitSpeech()
         micBusy = false
-        lastReplyText?.let { notifyReply(it) }
+        val reply = lastReplyText
+        reply?.let { if (!uiVisible) notifyReply(it) }
+        return expectsAnswer(reply ?: "")
     }
+
+    private suspend fun waitSpeech() {
+        kotlinx.coroutines.delay(300)
+        kotlinx.coroutines.withTimeoutOrNull(60_000) { speaker.speaking.first { !it } }
+    }
+
+    /** ¿Irvin quedó esperando una respuesta? (terminó con pregunta o hay algo por elegir/confirmar) */
+    private fun expectsAnswer(reply: String): Boolean =
+        reply.trimEnd().endsWith("?") || _musicChoice.value != null || _pending.value != null
 
     /** Turno de voz rápido (burbuja / widget): dictado local si se puede, si no audio a Gemma. */
     suspend fun quickVoiceTurn() {
         val ctx = getApplication<Application>()
-        if (store.settings.value.fastVoice && !fastVoiceBroken && SpeechRecognizer.isRecognitionAvailable(ctx)) {
+        if (!(store.settings.value.fastVoice && !fastVoiceBroken && SpeechRecognizer.isRecognitionAvailable(ctx))) { handsFreeTurn(); return }
+        // Modo conversación: si Irvin pregunta algo, vuelve a escuchar solo (hasta 4 veces seguidas).
+        var turns = 0
+        var misses = 0
+        while (turns < 5) {
+            turns++
             playWake()
             _mode.value = Mode.LISTENING
             micBusy = true
-            val text = listenOnce()
-            if (!text.isNullOrBlank()) playEnd()
-            micBusy = false
-            _mode.value = Mode.IDLE
-            _partialSpeech.value = ""
-            if (!text.isNullOrBlank()) handsFreeText(text)
-            else if (!fastVoiceBroken) { speaker.say("No te escuché, ¿me repites?", flush = true); toast("No te escuché.") }
-            if (fastVoiceBroken) handsFreeTurn()
-        } else handsFreeTurn()
+            val text = try { listenOnce() } finally { micBusy = false; _mode.value = Mode.IDLE; _partialSpeech.value = "" }
+            if (text.isNullOrBlank()) {
+                if (fastVoiceBroken) { handsFreeTurn(); return }
+                misses++
+                if (misses >= 2 || turns > 1 && misses >= 1) { speaker.say("Ok, aquí estoy si me necesitas.", flush = true); return }
+                speaker.say("No te escuché, ¿me repites?", flush = true); waitSpeech()
+                continue
+            }
+            playEnd()
+            misses = 0
+            val more = handsFreeText(text)
+            if (!more) return
+        }
     }
+
+    /** Modo conversación en la app: tras una respuesta con pregunta, vuelve a abrir el micrófono. */
+    private fun followUpInApp(reply: String) {
+        if (!voiceTurn || !expectsAnswer(reply)) { voiceTurn = false; return }
+        viewModelScope.launch {
+            waitSpeech()
+            if (_mode.value == Mode.IDLE && genJob?.isActive != true) toggleListening()
+        }
+    }
+    @Volatile private var voiceTurn = false
+    fun endVoiceTurn() { voiceTurn = false }
 
     private suspend fun listenOnce(): String? = kotlinx.coroutines.suspendCancellableCoroutine { cont ->
         val ctx = getApplication<Application>()
