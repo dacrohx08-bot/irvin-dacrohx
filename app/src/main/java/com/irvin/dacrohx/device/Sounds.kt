@@ -6,7 +6,7 @@ import android.media.SoundPool
 import com.irvin.dacrohx.R
 
 /** Sonidos propios de Irvin (sintetizados). Algunos traen su pareja de "listo" al terminar de escuchar. */
-class Sounds(ctx: Context) {
+class Sounds(private val ctx: Context) {
 
     data class Option(
         val id: String, val label: String, val res: Int,
@@ -40,15 +40,33 @@ class Sounds(ctx: Context) {
     private val pool = SoundPool.Builder()
         .setMaxStreams(3)
         .setAudioAttributes(
-            AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+            // Usa el volumen multimedia (el de la música y la voz de Irvin), no el de "sonidos del sistema",
+            // que en muchos teléfonos viene bajo o silenciado.
+            AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build()
         ).build()
 
     private val loaded = HashMap<Int, Int>()
+    private val ready = java.util.Collections.synchronizedSet(HashSet<Int>())
 
     init {
+        pool.setOnLoadCompleteListener { _, sampleId, status -> if (status == 0) ready += sampleId }
         options.flatMap { listOf(it.res, it.endRes) }.filter { it != 0 }.distinct()
             .forEach { loaded[it] = pool.load(ctx, it, 1) }
+    }
+
+    /** Reproduce con SoundPool; si aún no cargó, usa MediaPlayer como respaldo. */
+    private fun playRes(res: Int, gain: Float) {
+        if (res == 0) return
+        val id = loaded[res]
+        if (id != null && id in ready && pool.play(id, gain, gain, 1, 0, 1f) != 0) return
+        try {
+            android.media.MediaPlayer.create(ctx, res)?.apply {
+                setVolume(gain, gain)
+                setOnCompletionListener { it.release() }
+                start()
+            }
+        } catch (_: Exception) {}
     }
 
     private fun opt(id: String) = options.firstOrNull { it.id == id } ?: options.first { it.id == "nucleo" }
@@ -56,15 +74,12 @@ class Sounds(ctx: Context) {
     /** Sonido de "te escucho". */
     fun wake(id: String) {
         val o = opt(id.ifEmpty { "nucleo" })
-        val s = loaded[o.res] ?: return
-        pool.play(s, o.gain, o.gain, 1, 0, 1f)
+        playRes(o.res, o.gain)
     }
 
     /** Sonido de "listo, ya te escuché" (la pareja del sonido elegido). */
     fun end(id: String) {
         val o = opt(id.ifEmpty { "nucleo" })
-        val s = loaded[o.endRes] ?: return
-        val g = if (o.group == "Asistente") o.gain else 0.7f
-        pool.play(s, g, g, 1, 0, 1f)
+        playRes(o.endRes, if (o.group == "Asistente") o.gain else 0.7f)
     }
 }
