@@ -994,48 +994,50 @@ fun SettingsScreen(vm: Assistant, brain: BrainState) {
 private fun AnnouncePanel(vm: Assistant) {
     val ctx = LocalContext.current
     val st by vm.store.settings.collectAsState()
-    var show by remember { mutableStateOf(false) }
-    var secret by remember { mutableStateOf(st.secretWord) }
+    var secret by remember { mutableStateOf("") }
     val notifOk = com.irvin.dacrohx.device.NotifListener.enabled(ctx)
+    val protected = st.secretWord.isNotBlank()
     Panel {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Avisarme cuando llegue un mensaje", color = C.Txt, fontSize = 16.sp)
-                Text("Irvin dice “Tienes un mensaje nuevo, ¿quieres que lo lea?” y escucha tu respuesta.", color = C.Mut, fontSize = 13.sp)
-            }
-            Switch(st.announceMsgs, { v ->
-                if (v && !notifOk) { com.irvin.dacrohx.device.NotifListener.openSettings(ctx); vm.toast("Primero permite que Irvin lea notificaciones.") }
-                vm.store.updateSettings { it.copy(announceMsgs = v) }
-            }, colors = SwitchDefaults.colors(checkedTrackColor = C.Red))
-        }
-        Spacer(Modifier.height(10.dp))
         Text("🔐 Palabra secreta", color = C.Txt, fontSize = 16.sp)
         Text(
-            "Solo leeré tus mensajes si dices esta palabra. Si alguien más dice “sí”, contesto “De acuerdo” y no leo nada, sin dar pistas. Déjala vacía para que baste con decir “sí”.",
+            "Irvin SOLO lee tus mensajes si dices esta palabra. Si alguien más dice “sí”, contesta “De acuerdo” y no lee nada, sin dar pistas.",
             color = C.Mut, fontSize = 13.sp,
+        )
+        Text(
+            if (protected) "● Protegido (la palabra no se muestra)" else "○ Sin palabra secreta: los avisos están desactivados",
+            color = if (protected) C.Ok else C.Warn, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp),
         )
         Spacer(Modifier.height(6.dp))
         OutlinedTextField(
             value = secret, onValueChange = { secret = it.take(40) },
-            label = { Text("Palabra o frase secreta") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-            visualTransformation = if (show) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
-            trailingIcon = { TextButton(onClick = { show = !show }) { Text(if (show) "Ocultar" else "Ver", color = C.Mut) } },
+            label = { Text(if (protected) "Nueva palabra secreta" else "Crea tu palabra secreta") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+            visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
             colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = C.Red, unfocusedBorderColor = C.Line, focusedContainerColor = C.Bg2, unfocusedContainerColor = C.Bg2),
         )
         Row(Modifier.padding(top = 6.dp)) {
             Button(onClick = {
+                if (secret.trim().length < 3) { vm.toast("Usa al menos 3 letras."); return@Button }
                 vm.store.updateSettings { it.copy(secretWord = secret.trim()) }
-                vm.toast(if (secret.isBlank()) "Sin palabra secreta." else "Palabra secreta guardada 🤫")
+                secret = ""
+                vm.toast("Palabra secreta guardada 🤫")
             }, colors = ButtonDefaults.buttonColors(containerColor = C.Red)) { Text("Guardar") }
             Spacer(Modifier.width(8.dp))
-            if (st.secretWord.isNotBlank()) OutlinedButton(onClick = {
-                secret = ""; vm.store.updateSettings { it.copy(secretWord = "") }; vm.toast("Palabra secreta eliminada.")
+            if (protected) OutlinedButton(onClick = {
+                vm.store.updateSettings { it.copy(secretWord = "", announceMsgs = false) }; vm.toast("Palabra secreta eliminada y avisos apagados.")
             }) { Text("Quitar", color = C.Red2) }
         }
-        Text(
-            if (st.secretWord.isNotBlank()) "● Protegido" else "○ Sin palabra secreta",
-            color = if (st.secretWord.isNotBlank()) C.Ok else C.Mut, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp),
-        )
+        Spacer(Modifier.height(12.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Avisarme cuando llegue un mensaje", color = if (protected) C.Txt else C.Mut, fontSize = 16.sp)
+                Text("“Tienes un mensaje nuevo, ¿quieres que lo lea?” — solo lo lee con tu palabra secreta.", color = C.Mut, fontSize = 13.sp)
+            }
+            Switch(st.announceMsgs && protected, { v ->
+                if (!protected) { vm.toast("Primero crea tu palabra secreta."); return@Switch }
+                if (v && !notifOk) { com.irvin.dacrohx.device.NotifListener.openSettings(ctx); vm.toast("Permite que Irvin lea notificaciones.") }
+                vm.store.updateSettings { it.copy(announceMsgs = v) }
+            }, enabled = protected, colors = SwitchDefaults.colors(checkedTrackColor = C.Red))
+        }
         Spacer(Modifier.height(10.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -1045,7 +1047,7 @@ private fun AnnouncePanel(vm: Assistant) {
             Switch(st.discreetAnnounce, { v -> vm.store.updateSettings { it.copy(discreetAnnounce = v) } }, colors = SwitchDefaults.colors(checkedTrackColor = C.Red))
         }
         Text(
-            "Para responder con la pantalla apagada, deja activo “Oye Irvin”. También puedes decir después “Oye Irvin” + tu palabra secreta.",
+            "Tip: activa también “Bloquear con huella” en Seguridad, así nadie puede abrir Irvin ni cambiar tu palabra.",
             color = C.Mut, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp),
         )
     }

@@ -132,7 +132,7 @@ class Assistant private constructor(private val app: Application) {
 
     fun onIncomingMessage(item: com.irvin.dacrohx.device.NotifListener.Item) {
         val st = store.settings.value
-        if (!st.announceMsgs) return
+        if (!st.announceMsgs || st.secretWord.isBlank()) return
         val am = app.getSystemService(android.media.AudioManager::class.java)
         if (am.mode == android.media.AudioManager.MODE_IN_CALL || am.mode == android.media.AudioManager.MODE_IN_COMMUNICATION) return
         // Evita repetir el aviso si la misma persona manda varios mensajes seguidos.
@@ -169,13 +169,9 @@ class Assistant private constructor(private val app: Application) {
         val no = Regex("^(no|nel|nop|ahorita no|luego|despues|al rato|ahora no)\\b").containsMatchIn(x)
         if (no) { speaker.say("Ok.", flush = true); lastAnnounced = null; return true }
         val yes = Regex("\\b(si|claro|dale|va|ok|leelo|lee|leemelo|adelante|simon|sale|por favor)\\b").containsMatchIn(x)
-        if (hasSecret) {
-            if (secretOk(said)) { readMessages(item); return true }
-            // Sin pistas: parece que simplemente no hizo nada.
-            if (yes) { speaker.say("De acuerdo.", flush = true); lastAnnounced = null; return true }
-            return false
-        }
-        if (yes) { readMessages(item); return true }
+        // Solo la palabra secreta lo lee. Cualquier otra respuesta: "De acuerdo", sin pistas.
+        if (hasSecret && secretOk(said)) { readMessages(item); return true }
+        if (yes) { speaker.say("De acuerdo.", flush = true); lastAnnounced = null; return true }
         return false
     }
 
@@ -185,7 +181,7 @@ class Assistant private constructor(private val app: Application) {
         val texts = (if (all.isEmpty()) listOf(item) else all).joinToString(". ") { it.text.take(400) }
         speaker.say("${item.title} dice: $texts", flush = true)
         // Por privacidad no se guarda el contenido en el chat.
-        store.addChat(ChatMsg(role = "sys", text = if (hasSecret) "📩 Mensaje leído" else "📩 Leí el mensaje de ${item.title}"))
+        store.addChat(ChatMsg(role = "sys", text = "📩 Mensaje leído"))
     }
 
     /** Pide música respetando los favoritos (1 = directo, 2 = pregunta entre ellos). */

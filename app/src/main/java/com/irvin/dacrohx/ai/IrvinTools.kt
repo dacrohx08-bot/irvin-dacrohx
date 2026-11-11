@@ -287,7 +287,8 @@ class IrvinTools(
         @ToolParam(description = "Palabra clave que dijo el usuario, o vacío.") clave: String,
     ): String {
         if (!com.irvin.dacrohx.device.NotifListener.enabled(ctx)) return "No tengo acceso a las notificaciones. Dile que lo active en Ajustes → Permisos → Notificaciones."
-        if (host.hasSecret && !host.secretOk(clave)) return "CLAVE: los mensajes están protegidos. Pide al usuario su palabra clave (no la digas ni des pistas)."
+        if (!host.hasSecret) return "Los mensajes están protegidos: el usuario debe crear su palabra secreta en Ajustes → Avisos de mensajes."
+        if (!host.secretOk(clave) || clave.isBlank()) return "CLAVE: los mensajes están protegidos. Pide al usuario su palabra clave (no la digas ni des pistas)."
         onAction("🔔 Notificaciones")
         return com.irvin.dacrohx.device.NotifListener.format(com.irvin.dacrohx.device.NotifListener.recent(filtro))
     }
