@@ -11,6 +11,8 @@ class Sounds(ctx: Context) {
     data class Option(val id: String, val label: String, val res: Int)
 
     val options = listOf(
+        Option("titan", "Titán 🔥", R.raw.wake_titan),
+        Option("dominio", "Dominio", R.raw.wake_dominio),
         Option("nucleo", "Núcleo", R.raw.wake_nucleo),
         Option("cyber", "Cyber", R.raw.wake_cyber),
         Option("arranque", "Arranque Pro", R.raw.wake_arranque),
