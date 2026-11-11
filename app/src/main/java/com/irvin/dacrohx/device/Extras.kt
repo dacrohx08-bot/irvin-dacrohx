@@ -74,7 +74,7 @@ object Docs {
         val mime = ctx.contentResolver.getType(uri) ?: ""
         if (mime.contains("pdf") || n.lowercase().endsWith(".pdf")) return readPdf(ctx, uri, n)
         val text = ctx.contentResolver.openInputStream(uri)!!.use { it.readBytes().toString(Charsets.UTF_8) }
-        return Doc(n, text.take(9000), emptyList())
+        return Doc(n, text.take(6000), emptyList())
     }
 
     private fun readPdf(ctx: Context, uri: Uri, n: String): Doc {
@@ -102,9 +102,9 @@ object Docs {
                         images += bmp
                     }
                 }
-                if (sb.length > 9000) break
+                if (sb.length > 6000) break
             }
-            return Doc("$n (${r.pageCount} págs.)", sb.toString().take(9000), images)
+            return Doc("$n (${r.pageCount} págs.)", sb.toString().take(6000), images)
         }
     }
 }

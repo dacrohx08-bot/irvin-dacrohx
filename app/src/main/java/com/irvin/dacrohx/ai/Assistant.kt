@@ -248,6 +248,16 @@ $rem
         }
     }
 
+    /** Conversación nueva conservando solo los últimos mensajes. */
+    private suspend fun compactConversation() {
+        val history = store.chat.value
+            .filter { !it.pending && !it.error && (it.role == "user" || it.role == "model") && it.text.isNotBlank() }
+            .dropLast(2).takeLast(4)
+            .map { it.role to it.text.take(600) }
+            .dropWhile { it.first != "user" }
+        try { brain.newConversation(systemPrompt(), history, tools()) } catch (_: Throwable) {}
+    }
+
     fun newChat() {
         stopAll()
         store.clearChat()
@@ -317,20 +327,33 @@ $rem
             var tFirst = 0L
             val sb = StringBuilder()
             var failed: String? = null
-            try {
-                brain.send(parts)
-                    .catch { e -> failed = e.message ?: e.toString() }
-                    .collect { delta ->
-                        if (delta.isNotEmpty()) {
-                            if (tFirst == 0L) tFirst = System.currentTimeMillis() - t0
-                            sb.append(delta)
-                            val shown = sb.toString()
-                            store.updateChat(reply.id) { it.copy(text = shown) }
-                            if (autoSpeak) speaker.feed(delta)
+            // Si la memoria de trabajo va muy llena, empieza una conversación fresca (recordando lo último).
+            if (brain.tokenCount() > brain.maxTokens * 0.6) compactConversation()
+            suspend fun attempt() {
+                try {
+                    brain.send(parts)
+                        .catch { e -> failed = e.message ?: e.toString() }
+                        .collect { delta ->
+                            if (delta.isNotEmpty()) {
+                                if (tFirst == 0L) tFirst = System.currentTimeMillis() - t0
+                                sb.append(delta)
+                                val shown = sb.toString()
+                                store.updateChat(reply.id) { it.copy(text = shown) }
+                                if (autoSpeak) speaker.feed(delta)
+                            }
                         }
-                    }
-            } catch (e: Throwable) {
-                failed = e.message ?: e.toString()
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    failed = e.message ?: e.toString()
+                }
+            }
+            attempt()
+            // Si falló sin decir nada (p. ej. memoria llena), reinicia la conversación y reintenta una vez.
+            if (failed != null && sb.isEmpty()) {
+                failed = null
+                compactConversation()
+                attempt()
             }
             val finalText = sb.toString().trim()
             val total = System.currentTimeMillis() - t0
