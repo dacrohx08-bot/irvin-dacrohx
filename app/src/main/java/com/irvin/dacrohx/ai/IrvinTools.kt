@@ -25,6 +25,9 @@ class IrvinTools(
     private val ir: IrBlaster,
     private val music: MusicPlayer,
     private val online: com.irvin.dacrohx.device.Online,
+    private val phone: com.irvin.dacrohx.device.Phone,
+    private val cloud: com.irvin.dacrohx.device.Cloud,
+    private val host: Assistant,
     private val onAction: (String) -> Unit,
 ) : ToolSet {
 
@@ -229,6 +232,104 @@ class IrvinTools(
         @ToolParam(description = "Moneda origen, ej: USD") de: String,
         @ToolParam(description = "Moneda destino, ej: MXN") a: String,
     ): String = net("Tipo de cambio") { online.exchange(de, a) }
+
+    // ------------------------------------------------------------ teléfono
+    @Tool(description = "Busca un contacto y su número.")
+    fun buscarContacto(@ToolParam(description = "Nombre.") nombre: String): String {
+        val hits = phone.findContacts(nombre)
+        return if (hits.isEmpty()) "No encontré '$nombre' (¿falta permiso de contactos?)." else hits.joinToString("\n") { "${it.name}: ${it.number}" }
+    }
+
+    @Tool(description = "Llama por teléfono a un contacto o número.")
+    fun llamar(@ToolParam(description = "Nombre del contacto o número.") contacto: String): String {
+        val (c, err) = phone.resolve(contacto)
+        if (c == null) return err ?: "No encontré el contacto."
+        onAction("📞 ${c.name}")
+        return phone.call(c.number) + " (${c.name})"
+    }
+
+    @Tool(description = "Prepara un SMS. NO se envía hasta que el usuario confirme: lee el mensaje y pregunta '¿Lo envío?'.")
+    fun enviarSms(
+        @ToolParam(description = "Nombre del contacto o número.") contacto: String,
+        @ToolParam(description = "Texto del mensaje.") mensaje: String,
+    ): String {
+        val (c, err) = phone.resolve(contacto)
+        if (c == null) return err ?: "No encontré el contacto."
+        host.stage("Enviar SMS a ${c.name}: “$mensaje”") { phone.sms(c.number, mensaje) }
+        onAction("✉️ Por confirmar")
+        return "PENDIENTE de confirmación: pregunta al usuario si envía a ${c.name} el SMS: \"$mensaje\". Si dice que sí, usa confirmar_accion."
+    }
+
+    @Tool(description = "Abre WhatsApp con un mensaje ya escrito para un contacto (el usuario toca enviar).")
+    fun whatsapp(
+        @ToolParam(description = "Nombre del contacto o número.") contacto: String,
+        @ToolParam(description = "Texto del mensaje.") mensaje: String,
+    ): String {
+        val (c, err) = phone.resolve(contacto)
+        if (c == null) return err ?: "No encontré el contacto."
+        onAction("💬 ${c.name}")
+        return phone.whatsapp(c.number, mensaje)
+    }
+
+    @Tool(description = "Lee las notificaciones y mensajes recientes (WhatsApp, Telegram, SMS, correo...).")
+    fun leerNotificaciones(@ToolParam(description = "App o persona para filtrar, o 'todas'.") filtro: String): String {
+        if (!com.irvin.dacrohx.device.NotifListener.enabled(ctx)) return "No tengo acceso a las notificaciones. Dile que lo active en Ajustes → Permisos → Notificaciones."
+        onAction("🔔 Notificaciones")
+        return com.irvin.dacrohx.device.NotifListener.format(com.irvin.dacrohx.device.NotifListener.recent(filtro))
+    }
+
+    @Tool(description = "Prepara una respuesta a un mensaje recibido (WhatsApp, Telegram...). NO se envía hasta que el usuario confirme.")
+    fun responderMensaje(
+        @ToolParam(description = "Persona o chat al que se responde.") contacto: String,
+        @ToolParam(description = "Texto de la respuesta.") mensaje: String,
+    ): String {
+        val item = com.irvin.dacrohx.device.NotifListener.findReplyable(contacto)
+            ?: return "No hay una notificación reciente de '$contacto' que se pueda responder."
+        host.stage("Responder a ${item.title} (${item.app}): “$mensaje”") { com.irvin.dacrohx.device.NotifListener.reply(ctx, item, mensaje) }
+        onAction("💬 Por confirmar")
+        return "PENDIENTE de confirmación: pregunta si responde a ${item.title} por ${item.app}: \"$mensaje\". Si dice que sí, usa confirmar_accion."
+    }
+
+    @Tool(description = "Ejecuta la acción pendiente (enviar mensaje) SOLO después de que el usuario dijo que sí.")
+    fun confirmarAccion(): String = host.confirmPending().also { onAction("✅ $it".take(40)) }
+
+    @Tool(description = "Cancela la acción pendiente.")
+    fun cancelarAccion(): String { host.cancelPending(); return "Cancelado." }
+
+    // ------------------------------------------------------------ reloj y calendario
+    @Tool(description = "Pone una alarma en el reloj del teléfono.")
+    fun ponerAlarma(
+        @ToolParam(description = "Hora en formato 24 h (0-23).") hora: Int,
+        @ToolParam(description = "Minutos (0-59).") minuto: Int,
+        @ToolParam(description = "Etiqueta corta.") etiqueta: String,
+    ): String { onAction("⏰ %d:%02d".format(hora, minuto)); return phone.alarm(hora, minuto, etiqueta) }
+
+    @Tool(description = "Inicia un temporizador (cuenta regresiva) en el reloj del teléfono.")
+    fun temporizador(
+        @ToolParam(description = "Minutos.") minutos: Int,
+        @ToolParam(description = "Segundos extra (0 si no).") segundos: Int,
+        @ToolParam(description = "Etiqueta corta.") etiqueta: String,
+    ): String { onAction("⏲️ ${minutos} min"); return phone.timer(minutos * 60 + segundos, etiqueta) }
+
+    @Tool(description = "Consulta los eventos del calendario de un día.")
+    fun verAgenda(@ToolParam(description = "'hoy', 'mañana' o AAAA-MM-DD.") dia: String): String {
+        onAction("📅 Agenda"); return phone.agenda(dia)
+    }
+
+    @Tool(description = "Agenda un evento en el calendario.")
+    fun agendarEvento(
+        @ToolParam(description = "Título.") titulo: String,
+        @ToolParam(description = "Inicio AAAA-MM-DD HH:MM (24 h).") fechaHora: String,
+        @ToolParam(description = "Duración en minutos (60 si no se indica).") duracionMinutos: Int,
+    ): String { onAction("📅 $titulo"); return phone.addEvent(titulo, fechaHora, duracionMinutos) }
+
+    // ------------------------------------------------------------ nube
+    @Tool(description = "INTERNET: consulta un cerebro más potente en la nube para preguntas MUY difíciles (código, análisis, temas complejos). Úsala solo si no puedes responder bien tú.")
+    fun consultarNube(@ToolParam(description = "La pregunta completa con contexto.") pregunta: String): String {
+        if (!online.connected()) return com.irvin.dacrohx.device.Online.NO_NET
+        onAction("☁️ Nube")
+        return cloud.ask(pregunta)
+    }
 
     @Tool(description = "Guarda cómo quiere el usuario que lo llames (su nombre o apodo).")
     fun guardarNombre(

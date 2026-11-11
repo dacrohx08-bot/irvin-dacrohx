@@ -77,6 +77,8 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended:1.7.8")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    implementation("androidx.biometric:biometric:1.1.0")
+    implementation("androidx.fragment:fragment-ktx:1.8.5")
 
     // Cerebro offline: LiteRT-LM (Gemma 4 en el teléfono)
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.18.1")

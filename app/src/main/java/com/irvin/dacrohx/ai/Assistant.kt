@@ -73,6 +73,38 @@ class Assistant private constructor(private val app: Application) {
     val turbo = ModelManager(app, ModelManager.E2B)
     val online = com.irvin.dacrohx.device.Online(app)
     val updater = com.irvin.dacrohx.device.Updater(app)
+    val phone = com.irvin.dacrohx.device.Phone(app)
+    val cloud = com.irvin.dacrohx.device.Cloud(store)
+
+    // ---------------- acciones que requieren confirmación (enviar mensajes)
+    data class PendingAction(val description: String, val run: () -> String)
+    private val _pending = MutableStateFlow<PendingAction?>(null)
+    val pending: StateFlow<PendingAction?> = _pending.asStateFlow()
+    fun stage(description: String, run: () -> String) { _pending.value = PendingAction(description, run) }
+    fun confirmPending(): String {
+        val p = _pending.value ?: return "No hay ninguna acción pendiente."
+        _pending.value = null
+        return try { p.run() } catch (e: Exception) { "Falló: ${e.message}" }
+    }
+    fun cancelPending() { _pending.value = null }
+    fun confirmFromUi() { val r = confirmPending(); toast(r); store.addChat(ChatMsg(role = "sys", text = "✅ $r")) }
+
+    // ---------------- documento adjunto
+    private val _pendingDoc = MutableStateFlow<com.irvin.dacrohx.device.Docs.Doc?>(null)
+    val pendingDoc: StateFlow<com.irvin.dacrohx.device.Docs.Doc?> = _pendingDoc.asStateFlow()
+    fun attachDoc(uri: android.net.Uri) = viewModelScope.launch {
+        try {
+            val d = kotlinx.coroutines.withContext(Dispatchers.IO) { com.irvin.dacrohx.device.Docs.read(app, uri) }
+            if (d.text.isBlank() && d.pages.isEmpty()) toast("No pude leer texto de ese documento.") else _pendingDoc.value = d
+        } catch (e: Exception) { toast("No pude abrir el documento: ${e.message}") }
+    }
+    fun clearDoc() { _pendingDoc.value = null }
+
+    // ---------------- bloqueo con huella
+    private val _locked = MutableStateFlow(store.settings.value.biometric)
+    val locked: StateFlow<Boolean> = _locked.asStateFlow()
+    fun lock() { if (store.settings.value.biometric) _locked.value = true }
+    fun unlock() { _locked.value = false }
 
     fun checkUpdates(silent: Boolean = false) = viewModelScope.launch { updater.check(silent) }
     fun downloadUpdate(r: com.irvin.dacrohx.device.Updater.Release) = viewModelScope.launch {
@@ -168,7 +200,7 @@ class Assistant private constructor(private val app: Application) {
         bootBrain()
     }
 
-    private fun tools() = IrvinTools(getApplication(), store, device, ir, music, online) { label ->
+    private fun tools() = IrvinTools(getApplication(), store, device, ir, music, online, phone, cloud, this) { label ->
         currentReplyId?.let { id -> store.updateChat(id) { it.copy(actions = it.actions + label) } }
     }
 
@@ -188,6 +220,8 @@ Reglas:
 - RECETAS: siempre da (1) porciones y tiempo, (2) lista de ingredientes con cantidades exactas, (3) pasos numerados claros, (4) un tip. Sabes cocinar muy bien: nunca digas que necesitas internet para una receta.
 - Audio = el usuario hablándote; responde a lo que dijo. Imagen = analízala.
 - Si algo requiere una acción, usa la herramienta. NUNCA digas que hiciste algo (poner música, guardar, programar, abrir) si no usaste la herramienta y esta no confirmó. Si no tienes herramienta para algo, dilo.
+- Mensajes: enviar_sms y responder_mensaje solo PREPARAN; lee el mensaje y pregunta "¿Lo envío?". Solo si el usuario dice que sí → confirmar_accion. Si dice que no → cancelar_accion. Nunca digas "enviado" antes de confirmar_accion.
+- Si el usuario adjunta un DOCUMENTO, contesta usando su contenido.
 - Datos personales que valga la pena recordar → guardar_recuerdo. "Recuérdame…" → recordatorio_en_minutos/recordatorio_en_fecha. Música → reproducir_musica. Cuentas → calcular.
 - Conocimiento general (recetas, cómo hacer algo, explicaciones, traducciones, historia, consejos): lo sabes tú, responde directo SIN mencionar internet.
 - Datos actuales (noticias, clima, precios, dólar, resultados, horarios, algo reciente): usa las herramientas de INTERNET. Si responden SIN_INTERNET, dilo y no inventes.
@@ -227,7 +261,8 @@ $rem
     fun sendText(text: String) {
         val t = text.trim()
         val img = _pendingImage.value
-        if (t.isEmpty() && img == null) return
+        val doc = _pendingDoc.value
+        if (t.isEmpty() && img == null && doc == null) return
         var imgPath: String? = null
         val parts = mutableListOf<Content>()
         if (img != null) {
@@ -238,8 +273,21 @@ $rem
             try { f.outputStream().use { img.compress(Bitmap.CompressFormat.JPEG, 85, it) }; imgPath = f.absolutePath } catch (_: Exception) {}
             _pendingImage.value = null
         }
-        parts += Content.Text("${stamp()} " + t.ifEmpty { "¿Qué ves en esta imagen?" })
-        val userMsg = ChatMsg(role = "user", text = t.ifEmpty { "¿Qué ves en esta imagen?" }, kind = if (img != null) "image" else "text", image = imgPath)
+        var shown = t
+        if (doc != null) {
+            if (doc.pages.isNotEmpty() && brain.visionEnabled) doc.pages.forEach { pg ->
+                parts += Content.ImageBytes(ByteArrayOutputStream().also { pg.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray())
+            }
+            if (doc.text.isNotBlank()) parts += Content.Text("DOCUMENTO \"${doc.name}\":\n${doc.text}\n--- fin del documento ---")
+            if (shown.isEmpty()) shown = "Resúmeme este documento."
+            _pendingDoc.value = null
+        }
+        if (shown.isEmpty()) shown = "¿Qué ves en esta imagen?"
+        parts += Content.Text("${stamp()} $shown")
+        val userMsg = ChatMsg(
+            role = "user", text = if (doc != null) "📄 ${doc.name}\n$shown" else shown,
+            kind = if (img != null) "image" else "text", image = imgPath,
+        )
         run(userMsg, parts)
     }
 
@@ -528,6 +576,67 @@ $rem
         speaker.speaking.first { !it }
         micBusy = false
         lastReplyText?.let { notifyReply(it) }
+    }
+
+    /** Turno de voz rápido (burbuja / widget): dictado local si se puede, si no audio a Gemma. */
+    suspend fun quickVoiceTurn() {
+        val ctx = getApplication<Application>()
+        if (store.settings.value.fastVoice && !fastVoiceBroken && SpeechRecognizer.isRecognitionAvailable(ctx)) {
+            _mode.value = Mode.LISTENING
+            micBusy = true
+            val text = listenOnce()
+            micBusy = false
+            _mode.value = Mode.IDLE
+            if (!text.isNullOrBlank()) handsFreeText(text) else if (!fastVoiceBroken) toast("No te escuché.")
+            if (fastVoiceBroken) handsFreeTurn()
+        } else handsFreeTurn()
+    }
+
+    private suspend fun listenOnce(): String? = kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+        val ctx = getApplication<Application>()
+        val sr = if (SpeechRecognizer.isOnDeviceRecognitionAvailable(ctx)) SpeechRecognizer.createOnDeviceSpeechRecognizer(ctx)
+        else SpeechRecognizer.createSpeechRecognizer(ctx)
+        var done = false
+        fun finish(t: String?) {
+            if (done) return
+            done = true
+            try { sr.destroy() } catch (_: Exception) {}
+            if (cont.isActive) cont.resumeWith(Result.success(t))
+        }
+        sr.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle?) {}
+            override fun onBeginningOfSpeech() {}
+            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onBufferReceived(buffer: ByteArray?) {}
+            override fun onEndOfSpeech() {}
+            override fun onError(error: Int) {
+                if (error == SpeechRecognizer.ERROR_NETWORK || error == SpeechRecognizer.ERROR_SERVER || error == 13 || error == 12) fastVoiceBroken = true
+                finish(null)
+            }
+            override fun onResults(results: Bundle?) { finish(results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()) }
+            override fun onPartialResults(partialResults: Bundle?) {
+                _partialSpeech.value = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: ""
+            }
+            override fun onEvent(eventType: Int, params: Bundle?) {}
+        })
+        cont.invokeOnCancellation { finish(null) }
+        sr.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-MX")
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+        })
+    }
+
+    fun setBubble(on: Boolean) {
+        val ctx = getApplication<Application>()
+        if (on && !com.irvin.dacrohx.device.BubbleService.canDraw(ctx)) {
+            com.irvin.dacrohx.device.BubbleService.askPermission(ctx)
+            toast("Permite “Mostrar sobre otras apps” y vuelve a activar la burbuja.")
+            return
+        }
+        store.updateSettings { it.copy(bubble = on) }
+        if (on) com.irvin.dacrohx.device.BubbleService.start(ctx) else com.irvin.dacrohx.device.BubbleService.stop(ctx)
     }
 
     @Volatile private var lastReplyText: String? = null

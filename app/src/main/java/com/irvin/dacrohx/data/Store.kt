@@ -44,6 +44,10 @@ data class Settings(
     val fastVoice: Boolean = true,
     val turbo: Boolean = false,
     val useInternet: Boolean = true,
+    val bubble: Boolean = false,
+    val biometric: Boolean = false,
+    val cloudKey: String = "",
+    val cloudModel: String = "claude-sonnet-5-5",
 )
 
 val PERSONAS = listOf(
@@ -158,6 +162,10 @@ class Store private constructor(private val ctx: Context) {
             .putBoolean("fastVoice", s.fastVoice)
             .putBoolean("turbo", s.turbo)
             .putBoolean("useInternet", s.useInternet)
+            .putBoolean("bubble", s.bubble)
+            .putBoolean("biometric", s.biometric)
+            .putString("cloudKey", s.cloudKey)
+            .putString("cloudModel", s.cloudModel)
             .apply()
     }
 
@@ -173,6 +181,10 @@ class Store private constructor(private val ctx: Context) {
         fastVoice = prefs.getBoolean("fastVoice", true),
         turbo = prefs.getBoolean("turbo", false),
         useInternet = prefs.getBoolean("useInternet", true),
+        bubble = prefs.getBoolean("bubble", false),
+        biometric = prefs.getBoolean("biometric", false),
+        cloudKey = prefs.getString("cloudKey", "") ?: "",
+        cloudModel = prefs.getString("cloudModel", "claude-sonnet-5-5") ?: "claude-sonnet-5-5",
     )
 
     // ---------------- persistencia JSON ----------------

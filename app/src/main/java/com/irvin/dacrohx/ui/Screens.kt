@@ -53,6 +53,7 @@ import androidx.compose.material.icons.filled.BatteryFull
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.FlashlightOn
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Memory
@@ -142,7 +143,9 @@ enum class Tab(val label: String, val icon: ImageVector) {
 
 // =====================================================================================
 @Composable
-fun IrvinRoot(vm: Assistant) {
+fun IrvinRoot(vm: Assistant, onUnlock: () -> Unit = {}) {
+    val locked by vm.locked.collectAsState()
+    if (locked) { LockScreen(onUnlock); return }
     val modelState by vm.models.state.collectAsState()
     val toast by vm.toast.collectAsState()
 
@@ -188,6 +191,20 @@ fun IrvinRoot(vm: Assistant) {
                     .border(1.dp, C.Line, RoundedCornerShape(12.dp)).padding(horizontal = 14.dp, vertical = 10.dp)
             ) { Text(msg, color = C.Txt, fontSize = 15.sp, textAlign = TextAlign.Center) }
         }
+    }
+}
+
+@Composable
+private fun LockScreen(onUnlock: () -> Unit) {
+    Column(
+        Modifier.fillMaxSize().background(C.Bg).padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
+    ) {
+        Orb(Mode.IDLE, 0f, Modifier.size(160.dp))
+        Spacer(Modifier.height(24.dp))
+        Text("IRVIN DACROHX", style = Hud.copy(fontSize = 20.sp, color = C.Txt))
+        Text("Bloqueado", color = C.Mut, fontSize = 15.sp, modifier = Modifier.padding(top = 6.dp, bottom = 24.dp))
+        RedButton("🔒  Desbloquear con huella", onUnlock)
     }
 }
 
@@ -364,7 +381,10 @@ fun ChatScreen(vm: Assistant, mode: Mode, brain: BrainState) {
     val settings by vm.store.settings.collectAsState()
     val image by vm.pendingImage.collectAsState()
     val partial by vm.partialSpeech.collectAsState()
+    val pending by vm.pending.collectAsState()
+    val doc by vm.pendingDoc.collectAsState()
     val ctx = LocalContext.current
+    val docLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.attachDoc(uri) }
     var input by remember { mutableStateOf("") }
     var showAttach by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
@@ -426,6 +446,24 @@ fun ChatScreen(vm: Assistant, mode: Mode, brain: BrainState) {
             }
         }
 
+        // ---------- acción por confirmar ----------
+        pending?.let { pa ->
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp).clip(RoundedCornerShape(14.dp))
+                    .background(C.RedDim).border(1.dp, C.Red, RoundedCornerShape(14.dp)).padding(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(pa.description, color = C.Txt, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                TextButton(onClick = { vm.cancelPending() }) { Text("Cancelar", color = C.Mut) }
+                Button(onClick = { vm.confirmFromUi() }, colors = ButtonDefaults.buttonColors(containerColor = C.Red)) { Text("Enviar") }
+            }
+        }
+        doc?.let { d ->
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("📄 ${d.name} — pregúntame algo o envía para resumir", color = C.Mut, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                IconButton(onClick = { vm.clearDoc() }) { Icon(Icons.Filled.Close, "Quitar", tint = C.Mut) }
+            }
+        }
         // ---------- barra de entrada ----------
         AnimatedVisibility(image != null) {
             image?.let { bmp ->
@@ -455,6 +493,10 @@ fun ChatScreen(vm: Assistant, mode: Mode, brain: BrainState) {
                                 showAttach = false
                                 galleryLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                             }
+                            AttachRow(Icons.Filled.Description, "Documento (PDF o texto)") {
+                                showAttach = false
+                                docLauncher.launch(arrayOf("application/pdf", "text/*"))
+                            }
                         }
                     },
                     confirmButton = { TextButton(onClick = { showAttach = false }) { Text("Cerrar") } },
@@ -476,7 +518,7 @@ fun ChatScreen(vm: Assistant, mode: Mode, brain: BrainState) {
             when {
                 mode == Mode.THINKING || mode == Mode.SPEAKING ->
                     RoundIcon(Icons.Filled.Stop, "Detener", bg = C.Panel2) { vm.stopAll() }
-                input.isNotBlank() || image != null ->
+                input.isNotBlank() || image != null || doc != null ->
                     RoundIcon(Icons.AutoMirrored.Filled.Send, "Enviar", bg = C.Red) { vm.sendText(input); input = "" }
                 else ->
                     RoundIcon(Icons.Filled.Mic, "Hablar", bg = if (mode == Mode.LISTENING) C.Red else C.Panel2, big = true) { vm.toggleListening() }
@@ -841,6 +883,12 @@ fun SettingsScreen(vm: Assistant, brain: BrainState) {
         Label("Velocidad")
         SpeedPanel(vm, s)
 
+        Label("Permisos y accesos")
+        PermissionsPanel(vm)
+
+        Label("Burbuja flotante · modo gamer")
+        BubblePanel(vm, s.bubble)
+
         Label("Internet")
         Panel {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -882,6 +930,12 @@ fun SettingsScreen(vm: Assistant, brain: BrainState) {
             }
         }
 
+        Label("Cerebro extra en la nube (opcional)")
+        CloudPanel(vm, s)
+
+        Label("Seguridad y respaldo")
+        SecurityPanel(vm, s)
+
         Label("Actualizaciones")
         UpdatePanel(vm)
 
@@ -898,6 +952,119 @@ fun SettingsScreen(vm: Assistant, brain: BrainState) {
     if (confirmClear) Confirm("¿Borrar toda la conversación? Tus recuerdos y recordatorios se quedan.", { confirmClear = false }) { vm.newChat() }
     if (confirmModel) Confirm("¿Borrar el modelo (3.7 GB)? Tendrás que descargarlo otra vez.", { confirmModel = false }) {
         vm.deleteModel()
+    }
+}
+
+@Composable
+private fun PermissionsPanel(vm: Assistant) {
+    val ctx = LocalContext.current
+    var tick by remember { mutableIntStateOf(0) }
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { tick++ }
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) { tick++; onPauseOrDispose { } }
+    fun has(p: String) = androidx.core.content.ContextCompat.checkSelfPermission(ctx, p) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    val rows = listOf(
+        Triple("Contactos y llamadas", arrayOf(android.Manifest.permission.READ_CONTACTS, android.Manifest.permission.CALL_PHONE), "“Llama a mamá”"),
+        Triple("Mensajes SMS", arrayOf(android.Manifest.permission.SEND_SMS), "“Mándale un SMS a Juan”"),
+        Triple("Calendario", arrayOf(android.Manifest.permission.READ_CALENDAR, android.Manifest.permission.WRITE_CALENDAR), "“¿Qué tengo mañana?”"),
+        Triple("Música del teléfono", arrayOf(android.Manifest.permission.READ_MEDIA_AUDIO), "“Pon música”"),
+        Triple("Micrófono", arrayOf(android.Manifest.permission.RECORD_AUDIO), "Hablarle a Irvin"),
+    )
+    Panel {
+        rows.forEach { (label, perms, example) ->
+            val ok = tick >= 0 && perms.all { has(it) }
+            PermRow(label, example, ok) { launcher.launch(perms) }
+        }
+        val notifOk = tick >= 0 && com.irvin.dacrohx.device.NotifListener.enabled(ctx)
+        PermRow("Leer notificaciones", "“¿Qué me escribieron en WhatsApp?”", notifOk) {
+            com.irvin.dacrohx.device.NotifListener.openSettings(ctx)
+        }
+    }
+}
+
+@Composable
+private fun PermRow(label: String, example: String, ok: Boolean, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(label, color = C.Txt, fontSize = 15.sp)
+            Text(example, color = C.Mut, fontSize = 12.sp)
+        }
+        if (ok) Text("✓ Activo", color = C.Ok, fontSize = 13.sp)
+        else TextButton(onClick = onClick) { Text("Permitir", color = C.Red2, fontWeight = FontWeight.Bold) }
+    }
+}
+
+@Composable
+private fun BubblePanel(vm: Assistant, enabled: Boolean) {
+    Panel {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Burbuja de Irvin", color = C.Txt, fontSize = 16.sp)
+                Text(
+                    "Un núcleo rojo flotante encima de cualquier app y de tus juegos. Tócalo para hablar, arrástralo para moverlo.",
+                    color = C.Mut, fontSize = 13.sp,
+                )
+            }
+            Switch(enabled, { vm.setBubble(it) }, colors = SwitchDefaults.colors(checkedTrackColor = C.Red))
+        }
+        Text(
+            "Widget: mantén presionada la pantalla de inicio → Widgets → Irvin Dacrohx.\nBotón rápido: baja la barra de notificaciones → editar → “Hablar con Irvin”.",
+            color = C.Mut, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp),
+        )
+    }
+}
+
+@Composable
+private fun CloudPanel(vm: Assistant, s: com.irvin.dacrohx.data.Settings) {
+    var show by remember { mutableStateOf(false) }
+    Panel {
+        Text(
+            "Para preguntas muy difíciles, Irvin puede consultar a Claude en la nube cuando haya internet. " +
+                "Necesitas una clave de API de console.anthropic.com (tiene costo por uso). Sin clave, Irvin funciona igual.",
+            color = C.Mut, fontSize = 13.sp,
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = s.cloudKey, onValueChange = { v -> vm.store.updateSettings { it.copy(cloudKey = v.trim()) } },
+            label = { Text("Clave de API (sk-ant-…)") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+            visualTransformation = if (show) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+            trailingIcon = { TextButton(onClick = { show = !show }) { Text(if (show) "Ocultar" else "Ver", color = C.Mut) } },
+            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = C.Red, unfocusedBorderColor = C.Line, focusedContainerColor = C.Bg2, unfocusedContainerColor = C.Bg2),
+        )
+        Text(
+            if (s.cloudKey.isBlank()) "○ Sin configurar" else "● Configurado · la clave se guarda solo en tu teléfono",
+            color = if (s.cloudKey.isBlank()) C.Mut else C.Ok, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp),
+        )
+    }
+}
+
+@Composable
+private fun SecurityPanel(vm: Assistant, s: com.irvin.dacrohx.data.Settings) {
+    val ctx = LocalContext.current
+    val exportL = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) vm.toast(com.irvin.dacrohx.device.Backup.export(ctx, uri))
+    }
+    val importL = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) vm.toast(com.irvin.dacrohx.device.Backup.import(ctx, uri))
+    }
+    Panel {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Bloquear con huella", color = C.Txt, fontSize = 16.sp)
+                Text("Pide tu huella (o PIN) al abrir Irvin.", color = C.Mut, fontSize = 13.sp)
+            }
+            Switch(s.biometric, { v -> vm.store.updateSettings { it.copy(biometric = v) } }, colors = SwitchDefaults.colors(checkedTrackColor = C.Red))
+        }
+        Spacer(Modifier.height(12.dp))
+        Text("Respaldo de memoria", color = C.Txt, fontSize = 16.sp)
+        Text("Guarda tus recuerdos, avisos, ajustes y chat en un archivo para no perderlos si cambias de teléfono.", color = C.Mut, fontSize = 13.sp)
+        Spacer(Modifier.height(8.dp))
+        Row {
+            OutlinedButton(onClick = {
+                exportL.launch("irvin-respaldo-" + SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date()) + ".json")
+            }, modifier = Modifier.weight(1f)) { Text("Guardar") }
+            Spacer(Modifier.width(8.dp))
+            OutlinedButton(onClick = { importL.launch(arrayOf("application/json", "*/*")) }, modifier = Modifier.weight(1f)) { Text("Restaurar") }
+        }
     }
 }
 
