@@ -90,9 +90,9 @@ class VoiceRecorder {
                         if (lv > talk) { heardSpeech = true; silenceMs = 0 }
                         else if (lv < quiet || !heardSpeech) silenceMs += chunkMs
                         else silenceMs += chunkMs / 2
-                        if (heardSpeech && silenceMs >= 1100) autoStop = true
+                        if (heardSpeech && silenceMs >= 1000) autoStop = true
                         if (!heardSpeech && totalMs >= 6000) autoStop = true
-                        if (totalMs >= 12000) autoStop = true
+                        if (totalMs >= 10000) autoStop = true
                     }
                     if (autoStop) {
                         running = false

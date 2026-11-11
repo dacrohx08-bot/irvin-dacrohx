@@ -478,9 +478,19 @@ $rem
             }
             if (pick != null) { chooseMusicApp(pick, false); return "Listo, en ${pick.label}." }
         }
-        parseMusic(x)?.let { (q, app) ->
-            val r = requestMusic(q, app)
-            return if (r.startsWith("PREGUNTA:")) r.removePrefix("PREGUNTA: ") else r
+        // Busca una orden de música en cualquier frase (aunque se cuele ruido o el reconocedor
+        // escuche "por" / "pom" / "bon" en lugar de "pon").
+        run {
+            val raw = java.text.Normalizer.normalize(t.lowercase(), java.text.Normalizer.Form.NFD).replace(Regex("\\p{M}"), "")
+            val sentences = (listOf(x) + raw.split(Regex("[.?!;¿¡]+"))).map { it.replace(Regex("[,:]"), " ").replace(Regex("\\s+"), " ").trim() }.filter { it.isNotEmpty() }
+            for (sen in sentences) {
+                val fixed = sen.replace(Regex("^(oye irvin |irvin |oye )?"), "")
+                    .replace(Regex("^(por|pom|bon|pong|ponga|pongan|pones|pone|ton|com)\\b"), "pon")
+                parseMusic(fixed)?.let { (q, app) ->
+                    val r = requestMusic(q, app)
+                    return if (r.startsWith("PREGUNTA:")) r.removePrefix("PREGUNTA: ") else r
+                }
+            }
         }
         val musicWord = Regex("\\b(musica|cancion|rola|poweramp|spotify)\\b").containsMatchIn(x)
         val own = music.ownActive()
