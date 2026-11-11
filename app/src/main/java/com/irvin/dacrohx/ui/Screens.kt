@@ -57,6 +57,11 @@ import androidx.compose.material.icons.filled.FlashlightOn
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Psychology
@@ -312,6 +317,7 @@ private fun Header(mode: Mode, brain: BrainState, level: Float, onOrb: () -> Uni
 private val SUGGESTIONS = listOf(
     "¿Qué sabes de mí?",
     "Recuérdame en 10 minutos tomar agua",
+    "Pon música de mi teléfono",
     "Prende la linterna",
     "¿Cuánta batería tengo?",
     "Cuánto es el 15% de 1,280",
@@ -700,6 +706,8 @@ fun ControlScreen(vm: Assistant) {
             }
         }
         Spacer(Modifier.height(12.dp))
+        MusicPanel(vm)
+        Spacer(Modifier.height(12.dp))
         Panel {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Filled.FlashlightOn, null, tint = C.Red)
@@ -720,6 +728,42 @@ fun ControlScreen(vm: Assistant) {
                 Text(battery, color = C.Txt, fontSize = 16.sp)
             }
         }
+    }
+}
+
+@Composable
+private fun MusicPanel(vm: Assistant) {
+    val now by vm.music.now.collectAsState()
+    var query by remember { mutableStateOf("") }
+    var vol by remember { mutableStateOf(vm.music.volume().toFloat()) }
+    Panel {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.MusicNote, null, tint = C.Red)
+            Spacer(Modifier.width(8.dp))
+            Text(now.track?.label ?: "Música del teléfono", color = C.Txt, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 1, modifier = Modifier.weight(1f))
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Field(query, { query = it }, "Canción o artista (vacío = aleatorio)", Modifier.weight(1f))
+            Spacer(Modifier.width(8.dp))
+            RoundIcon(Icons.Filled.PlayArrow, "Reproducir", bg = C.Red) {
+                val hits = vm.music.search(query)
+                if (hits.isEmpty()) vm.toast("No encontré esa música en el teléfono.") else vm.music.playList(hits)
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.SpaceEvenly, modifier = Modifier.fillMaxWidth()) {
+            RoundIcon(Icons.Filled.SkipPrevious, "Anterior", bg = C.Panel2) { if (vm.music.ownActive()) vm.music.previous() else vm.music.mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS) }
+            RoundIcon(if (now.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "Pausa", bg = C.Panel2) {
+                if (vm.music.ownActive()) { if (now.playing) vm.music.pause() else vm.music.resume() }
+                else vm.music.mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
+            }
+            RoundIcon(Icons.Filled.SkipNext, "Siguiente", bg = C.Panel2) { if (vm.music.ownActive()) vm.music.next() else vm.music.mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_NEXT) }
+            RoundIcon(Icons.Filled.Stop, "Detener", bg = C.Panel2) { vm.music.stop() }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text("Volumen ${vol.toInt()}%", color = C.Mut, fontSize = 13.sp)
+        Slider(value = vol, onValueChange = { vol = it; vm.music.setVolume(it.toInt()) }, valueRange = 0f..100f)
     }
 }
 
@@ -755,19 +799,10 @@ fun SettingsScreen(vm: Assistant, brain: BrainState) {
         TextButton(onClick = { vm.resetConversation(true); vm.toast("Personalidad aplicada.") }) { Text("Aplicar personalidad", color = C.Red2) }
 
         Label("Voz")
-        Panel {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Responder en voz alta", color = C.Txt, fontSize = 16.sp, modifier = Modifier.weight(1f))
-                Switch(s.autoSpeak, { v -> vm.store.updateSettings { it.copy(autoSpeak = v) }; if (!v) vm.stopAll() }, colors = SwitchDefaults.colors(checkedTrackColor = C.Red))
-            }
-            Text("Velocidad: ${"%.2f".format(s.speechRate)}×", color = C.Mut, fontSize = 14.sp)
-            Slider(
-                value = s.speechRate, onValueChange = { v -> vm.store.updateSettings { it.copy(speechRate = v) } },
-                valueRange = 0.7f..1.6f,
-                onValueChangeFinished = { vm.speak("Así sueno ahora.") },
-            )
-            Text("Si no escuchas nada, instala la voz en español: Ajustes de Android → Accesibilidad → Salida de texto a voz.", color = C.Mut, fontSize = 12.sp)
-        }
+        VoicePanel(vm, s)
+
+        Label("Velocidad")
+        SpeedPanel(vm, s)
 
         Label("Manos libres · “Oye Irvin”")
         WakePanel(vm, s.wakeWord)
@@ -775,7 +810,7 @@ fun SettingsScreen(vm: Assistant, brain: BrainState) {
         Label("Cerebro")
         Panel {
             val info = when (brain) {
-                is BrainState.Ready -> "Gemma 4 E4B · ${brain.backend}\nVoz directa: ${if (brain.audio) "sí" else "no"} · Visión: ${if (brain.vision) "sí" else "no"}"
+                is BrainState.Ready -> "${vm.loadedLabel} · ${brain.backend}\nVoz directa: ${if (brain.audio) "sí" else "no"} · Visión: ${if (brain.vision) "sí" else "no"}"
                 is BrainState.Loading -> brain.step
                 is BrainState.Error -> brain.message
                 else -> "Apagado"
@@ -805,6 +840,93 @@ fun SettingsScreen(vm: Assistant, brain: BrainState) {
     if (confirmClear) Confirm("¿Borrar toda la conversación? Tus recuerdos y recordatorios se quedan.", { confirmClear = false }) { vm.newChat() }
     if (confirmModel) Confirm("¿Borrar el modelo (3.7 GB)? Tendrás que descargarlo otra vez.", { confirmModel = false }) {
         vm.deleteModel()
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun VoicePanel(vm: Assistant, s: com.irvin.dacrohx.data.Settings) {
+    val ctx = LocalContext.current
+    val voices by vm.speaker.voices.collectAsState()
+    LaunchedEffect(Unit) { vm.speaker.refreshVoices() }
+    Panel {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Responder en voz alta", color = C.Txt, fontSize = 16.sp, modifier = Modifier.weight(1f))
+            Switch(s.autoSpeak, { v -> vm.store.updateSettings { it.copy(autoSpeak = v) }; if (!v) vm.stopAll() }, colors = SwitchDefaults.colors(checkedTrackColor = C.Red))
+        }
+        Spacer(Modifier.height(8.dp))
+        Text("Elige la voz (toca para escucharla):", color = C.Mut, fontSize = 14.sp)
+        Spacer(Modifier.height(6.dp))
+        if (voices.isEmpty()) Text("No encontré voces en español instaladas.", color = C.Warn, fontSize = 13.sp)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Chip("Predeterminada", selected = s.voiceName.isEmpty()) {
+                vm.store.updateSettings { it.copy(voiceName = "") }
+                vm.speak("Hola, soy Irvin Dacrohx.")
+            }
+            voices.forEach { v ->
+                Chip(v.label, selected = s.voiceName == v.name) {
+                    vm.store.updateSettings { it.copy(voiceName = v.name) }
+                    vm.speaker.setVoice(v.name)
+                    vm.speak("Hola, soy Irvin Dacrohx. ¿Te gusta esta voz?")
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        Text("Tono: ${if (s.pitch < 0.9f) "grave" else if (s.pitch > 1.15f) "agudo" else "normal"}", color = C.Mut, fontSize = 14.sp)
+        Slider(
+            value = s.pitch, onValueChange = { v -> vm.store.updateSettings { it.copy(pitch = v) } },
+            valueRange = 0.6f..1.6f, onValueChangeFinished = { vm.speak("Así sueno ahora.") },
+        )
+        Text("Velocidad: ${"%.2f".format(s.speechRate)}×", color = C.Mut, fontSize = 14.sp)
+        Slider(
+            value = s.speechRate, onValueChange = { v -> vm.store.updateSettings { it.copy(speechRate = v) } },
+            valueRange = 0.7f..1.8f, onValueChangeFinished = { vm.speak("Así de rápido hablo.") },
+        )
+        OutlinedButton(
+            onClick = {
+                try { ctx.startActivity(android.content.Intent("com.android.settings.TTS_SETTINGS").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                catch (e: Exception) { vm.toast("Abre Ajustes → Accesibilidad → Salida de texto a voz.") }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("Descargar más voces (hombre / mujer)") }
+        Text(
+            "En “Motor de Google” → Instalar datos de voz → Español (México / EE.UU.) puedes bajar voces de hombre y de mujer. Luego regresa aquí y elige.",
+            color = C.Mut, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp),
+        )
+    }
+}
+
+@Composable
+private fun SpeedPanel(vm: Assistant, s: com.irvin.dacrohx.data.Settings) {
+    val turboState by vm.turbo.state.collectAsState()
+    Panel {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Modo turbo ⚡", color = C.Txt, fontSize = 16.sp)
+                Text(
+                    when (val t = turboState) {
+                        is ModelState.Downloading -> "Descargando… ${if (t.total > 0) t.done * 100 / t.total else 0}%"
+                        is ModelState.Failed -> t.reason
+                        is ModelState.Ready -> if (s.turbo) "Activo: cerebro E2B, casi el doble de rápido" else "Descargado (apagado)"
+                        else -> "Cerebro más ligero (2.6 GB): mucho más rápido, un poco menos listo"
+                    },
+                    color = if (s.turbo && turboState is ModelState.Ready) C.Ok else C.Mut, fontSize = 13.sp,
+                )
+            }
+            Switch(s.turbo, { vm.setTurbo(it) }, colors = SwitchDefaults.colors(checkedTrackColor = C.Red))
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Voz rápida", color = C.Txt, fontSize = 16.sp)
+                Text(
+                    "Convierte tu voz en texto en el teléfono antes de pensar (respuesta más rápida). Apágala si quieres que Irvin escuche el audio directo.",
+                    color = C.Mut, fontSize = 13.sp,
+                )
+            }
+            Switch(s.fastVoice, { v -> vm.store.updateSettings { it.copy(fastVoice = v) } }, colors = SwitchDefaults.colors(checkedTrackColor = C.Red))
+        }
+        Text("Debajo de cada respuesta verás ⚡ con el tiempo: primera palabra · total.", color = C.Mut, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
     }
 }
 

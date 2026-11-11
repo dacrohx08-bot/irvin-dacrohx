@@ -39,6 +39,10 @@ data class Settings(
     val speechRate: Float = 1.05f,
     val tvBrand: String = "samsung",
     val wakeWord: Boolean = false,
+    val voiceName: String = "",
+    val pitch: Float = 1.0f,
+    val fastVoice: Boolean = true,
+    val turbo: Boolean = false,
 )
 
 val PERSONAS = listOf(
@@ -148,6 +152,10 @@ class Store private constructor(private val ctx: Context) {
             .putFloat("speechRate", s.speechRate)
             .putString("tvBrand", s.tvBrand)
             .putBoolean("wakeWord", s.wakeWord)
+            .putString("voiceName", s.voiceName)
+            .putFloat("pitch", s.pitch)
+            .putBoolean("fastVoice", s.fastVoice)
+            .putBoolean("turbo", s.turbo)
             .apply()
     }
 
@@ -158,6 +166,10 @@ class Store private constructor(private val ctx: Context) {
         speechRate = prefs.getFloat("speechRate", 1.05f),
         tvBrand = prefs.getString("tvBrand", "samsung") ?: "samsung",
         wakeWord = prefs.getBoolean("wakeWord", false),
+        voiceName = prefs.getString("voiceName", "") ?: "",
+        pitch = prefs.getFloat("pitch", 1.0f),
+        fastVoice = prefs.getBoolean("fastVoice", true),
+        turbo = prefs.getBoolean("turbo", false),
     )
 
     // ---------------- persistencia JSON ----------------

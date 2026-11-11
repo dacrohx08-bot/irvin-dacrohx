@@ -23,16 +23,30 @@ sealed class ModelState {
  * Descarga (una sola vez) el cerebro de Irvin: Gemma 4 E4B en formato LiteRT-LM.
  * Después de esto todo funciona sin internet.
  */
-class ModelManager(private val ctx: Context) {
+data class ModelSpec(val fileName: String, val size: Long, val url: String, val label: String, val prefKey: String)
+
+class ModelManager(private val ctx: Context, private val spec: ModelSpec = E4B) {
 
     companion object {
-        const val FILE_NAME = "gemma-4-E4B-it.litertlm"
-        const val EXPECTED_SIZE = 3_659_530_240L
-        const val MIN_VALID_SIZE = 2_000_000_000L
-        const val URL =
-            "https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/28299f30ee4d43294517a4ac93abd6163412f07f/gemma-4-E4B-it.litertlm?download=true"
-        private const val PREF_DL_ID = "download_id"
+        val E4B = ModelSpec(
+            "gemma-4-E4B-it.litertlm", 3_659_530_240L,
+            "https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/28299f30ee4d43294517a4ac93abd6163412f07f/gemma-4-E4B-it.litertlm?download=true",
+            "Gemma 4 E4B", "download_id",
+        )
+        /** Modo turbo: modelo más pequeño, casi el doble de rápido. */
+        val E2B = ModelSpec(
+            "gemma-4-E2B-it.litertlm", 2_588_147_712L,
+            "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/6e5c4f1e395deb959c494953478fa5cec4b8008f/gemma-4-E2B-it.litertlm?download=true",
+            "Gemma 4 E2B (turbo)", "download_id_e2b",
+        )
     }
+
+    private val FILE_NAME = spec.fileName
+    private val EXPECTED_SIZE = spec.size
+    private val MIN_VALID_SIZE = spec.size * 9 / 10
+    private val URL = spec.url
+    private val PREF_DL_ID = spec.prefKey
+    val label: String get() = spec.label
 
     private val prefs = ctx.getSharedPreferences("irvin_model", Context.MODE_PRIVATE)
     private val dm = ctx.getSystemService(DownloadManager::class.java)
@@ -56,7 +70,7 @@ class ModelManager(private val ctx: Context) {
         partFile.delete()
         val req = DownloadManager.Request(Uri.parse(URL))
             .setTitle("Cerebro de Irvin Dacrohx")
-            .setDescription("Gemma 4 E4B · 3.7 GB · solo se descarga una vez")
+            .setDescription("${spec.label} · solo se descarga una vez")
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE)
             .setAllowedOverMetered(true)
             .setAllowedOverRoaming(false)
@@ -142,7 +156,7 @@ class ModelManager(private val ctx: Context) {
                     }
                 }
             }
-            if (tmp.length() < MIN_VALID_SIZE) {
+            if (tmp.length() < 2_000_000_000L) {
                 tmp.delete()
                 _state.value = ModelState.Failed("Ese archivo no parece ser el modelo (es muy pequeño).")
                 false

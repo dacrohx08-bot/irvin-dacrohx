@@ -69,6 +69,14 @@ class Assistant private constructor(private val app: Application) {
     val ir = IrBlaster(app)
     val speaker = Speaker(app)
     val recorder = VoiceRecorder()
+    val music = com.irvin.dacrohx.device.MusicPlayer(app)
+    val turbo = ModelManager(app, ModelManager.E2B)
+
+    /** El modelo que se usa: el turbo si está activado y descargado. */
+    private fun activeModel(): ModelManager =
+        if (store.settings.value.turbo && turbo.isReady()) turbo else models
+    @Volatile var loadedLabel: String = ""
+        private set
     val wake = com.irvin.dacrohx.device.WakeModel(app)
 
     private val _mode = MutableStateFlow(Mode.IDLE)
@@ -89,6 +97,8 @@ class Assistant private constructor(private val app: Application) {
     private var genJob: Job? = null
     private var currentReplyId: String? = null
     private var recognizer: SpeechRecognizer? = null
+    /** Si el reconocimiento rápido de Android falla sin internet, usamos el oído de Gemma. */
+    @Volatile private var fastVoiceBroken = false
 
     init {
         recorder.onAutoStop = { viewModelScope.launch { stopListeningAndSend() } }
@@ -100,6 +110,14 @@ class Assistant private constructor(private val app: Application) {
         }
         viewModelScope.launch { models.watchDownload() }
         viewModelScope.launch { wake.watch() }
+        viewModelScope.launch { turbo.watchDownload() }
+        viewModelScope.launch {
+            store.settings.collect { st ->
+                speaker.rate = st.speechRate
+                speaker.pitch = st.pitch
+                speaker.setVoice(st.voiceName)
+            }
+        }
         viewModelScope.launch {
             models.state.collect { if (it is ModelState.Ready && brain.state.value is BrainState.Off) bootBrain() }
         }
@@ -115,8 +133,25 @@ class Assistant private constructor(private val app: Application) {
 
     // ------------------------------------------------------------------ cerebro
     private fun bootBrain() = viewModelScope.launch {
-        brain.load(models.modelFile.absolutePath)
+        val m = activeModel()
+        loadedLabel = m.label
+        brain.load(m.modelFile.absolutePath)
         if (brain.ready) resetConversation(keepHistory = true)
+    }
+
+    /** Activa/desactiva el modo turbo (descarga el modelo rápido la primera vez). */
+    fun setTurbo(on: Boolean) {
+        store.updateSettings { it.copy(turbo = on) }
+        if (on && !turbo.isReady()) {
+            turbo.startDownload()
+            toast("Descargando cerebro turbo (2.6 GB)… sigues usando el actual mientras tanto.")
+            viewModelScope.launch {
+                turbo.watchDownload()
+                if (turbo.isReady() && store.settings.value.turbo) { retryBrain(); toast("¡Modo turbo listo!") }
+            }
+            return
+        }
+        retryBrain()
     }
 
     fun retryBrain() = viewModelScope.launch {
@@ -124,7 +159,7 @@ class Assistant private constructor(private val app: Application) {
         bootBrain()
     }
 
-    private fun tools() = IrvinTools(getApplication(), store, device, ir) { label ->
+    private fun tools() = IrvinTools(getApplication(), store, device, ir, music) { label ->
         currentReplyId?.let { id -> store.updateChat(id) { it.copy(actions = it.actions + label) } }
     }
 
@@ -137,26 +172,18 @@ class Assistant private constructor(private val app: Application) {
             .ifEmpty { "(ninguno)" }
         val user = s.name.ifBlank { "tu usuario" }
         return """
-Eres IRVIN DACROHX, el asistente personal de $user. Vives dentro de su teléfono gamer RedMagic 11 Pro y funcionas 100% sin internet: tu cerebro corre en el propio teléfono. Eres SU asistente, hecho solo para él.
-
-PERSONALIDAD: ${s.persona}
-
-REGLAS:
-- Responde SIEMPRE en español de México, natural y breve (1 a 4 frases) salvo que pida detalle. Tus respuestas se leen en un celular y se escuchan en voz alta: nada de tablas ni encabezados.
-- Si recibes audio, es el usuario hablándote: responde a lo que dijo (no describas el audio).
-- Si recibes una imagen, analízala y responde a lo que pregunte sobre ella.
-- Usa tus herramientas cuando sirvan. Nunca digas que guardaste, programaste o hiciste algo sin haber usado la herramienta correspondiente.
-- Cuando el usuario comparta algo personal que valga la pena recordar, usa guardar_recuerdo sin preguntar.
-- Para "recuérdame…" usa recordatorio_en_minutos o recordatorio_en_fecha. Si no dice cuándo, pregunta.
-- Para cualquier cuenta usa calcular.
-- No tienes internet: si te piden noticias, clima en vivo o buscar en la web, dilo con honestidad y ofrece lo que sí puedes hacer.
-
-FECHA Y HORA AL INICIAR: $now (cada mensaje del usuario trae la hora actual entre corchetes).
-
-LO QUE SABES DEL USUARIO:
+Eres IRVIN DACROHX, asistente personal de $user en su teléfono RedMagic 11 Pro. Funcionas sin internet.
+Personalidad: ${s.persona}
+Reglas:
+- Español de México, natural y BREVE (1-3 frases) salvo que pida detalle. Se escucha en voz alta: sin tablas ni listas largas.
+- Audio = el usuario hablándote; responde a lo que dijo. Imagen = analízala.
+- Si algo requiere una acción, usa la herramienta. NUNCA digas que hiciste algo (poner música, guardar, programar, abrir) si no usaste la herramienta y esta no confirmó. Si no tienes herramienta para algo, dilo.
+- Datos personales que valga la pena recordar → guardar_recuerdo. "Recuérdame…" → recordatorio_en_minutos/recordatorio_en_fecha. Música → reproducir_musica. Cuentas → calcular.
+- Sin internet: no tienes noticias, clima ni web.
+Inicio: $now (cada mensaje trae la hora entre corchetes).
+Sabes del usuario:
 $mem
-
-RECORDATORIOS PENDIENTES:
+Recordatorios:
 $rem
 """.trim()
     }
@@ -227,6 +254,8 @@ $rem
         val autoSpeak = forceSpeak || store.settings.value.autoSpeak
         speaker.rate = store.settings.value.speechRate
         genJob = viewModelScope.launch {
+            val t0 = System.currentTimeMillis()
+            var tFirst = 0L
             val sb = StringBuilder()
             var failed: String? = null
             try {
@@ -234,6 +263,7 @@ $rem
                     .catch { e -> failed = e.message ?: e.toString() }
                     .collect { delta ->
                         if (delta.isNotEmpty()) {
+                            if (tFirst == 0L) tFirst = System.currentTimeMillis() - t0
                             sb.append(delta)
                             val shown = sb.toString()
                             store.updateChat(reply.id) { it.copy(text = shown) }
@@ -244,7 +274,10 @@ $rem
                 failed = e.message ?: e.toString()
             }
             val finalText = sb.toString().trim()
-            store.updateChat(reply.id, persist = true) {
+            val total = System.currentTimeMillis() - t0
+            val speed = "⚡ %.1f s · %.1f s".format(tFirst / 1000.0, total / 1000.0)
+            store.updateChat(reply.id, persist = true) { m0 ->
+                val it = if (failed == null) m0.copy(actions = m0.actions + speed) else m0
                 when {
                     failed != null && finalText.isEmpty() -> it.copy(text = "Algo falló en mis circuitos: $failed", pending = false, error = true)
                     finalText.isEmpty() -> it.copy(text = "Listo.", pending = false)
@@ -278,7 +311,12 @@ $rem
         if (_mode.value == Mode.LISTENING) { stopListeningAndSend(); return }
         if (_mode.value == Mode.THINKING) return
         speaker.stop()
-        if (brain.audioEnabled) {
+        val ctx = getApplication<Application>()
+        val fast = store.settings.value.fastVoice && !fastVoiceBroken && SpeechRecognizer.isRecognitionAvailable(ctx)
+        if (fast || !brain.audioEnabled) {
+            micBusy = true
+            startRecognizer()
+        } else if (brain.audioEnabled) {
             micBusy = true
             if (recorder.start()) _mode.value = Mode.LISTENING
             else toast("No pude usar el micrófono.")
@@ -301,7 +339,10 @@ $rem
     private fun startRecognizer() {
         val ctx = getApplication<Application>()
         if (!SpeechRecognizer.isRecognitionAvailable(ctx)) { toast("No hay reconocimiento de voz disponible."); return }
-        val sr = SpeechRecognizer.createSpeechRecognizer(ctx)
+        // En Android 12+ usa el reconocedor que corre en el teléfono (sin internet, más rápido).
+        val sr = if (SpeechRecognizer.isOnDeviceRecognitionAvailable(ctx))
+            SpeechRecognizer.createOnDeviceSpeechRecognizer(ctx)
+        else SpeechRecognizer.createSpeechRecognizer(ctx)
         recognizer = sr
         _partialSpeech.value = ""
         sr.setRecognitionListener(object : RecognitionListener {
@@ -310,7 +351,22 @@ $rem
             override fun onRmsChanged(rmsdB: Float) {}
             override fun onBufferReceived(buffer: ByteArray?) {}
             override fun onEndOfSpeech() {}
-            override fun onError(error: Int) { finishRecognizer(null) }
+            override fun onError(error: Int) {
+                val noOffline = error == SpeechRecognizer.ERROR_NETWORK || error == SpeechRecognizer.ERROR_NETWORK_TIMEOUT ||
+                    error == SpeechRecognizer.ERROR_SERVER || error == 13 /* LANGUAGE_UNAVAILABLE */ || error == 12 /* LANGUAGE_NOT_SUPPORTED */
+                if (error == 13 && android.os.Build.VERSION.SDK_INT >= 33) {
+                    try {
+                        sr.triggerModelDownload(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-MX"))
+                    } catch (_: Exception) {}
+                }
+                if (noOffline && brain.audioEnabled) {
+                    fastVoiceBroken = true
+                    toast("El dictado rápido necesita internet o el paquete de voz offline. Ahora uso mi oído propio: toca el micrófono otra vez.")
+                } else if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
+                    toast("No te escuché bien, intenta otra vez.")
+                }
+                finishRecognizer(null)
+            }
             override fun onResults(results: Bundle?) {
                 finishRecognizer(results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull())
             }
@@ -330,6 +386,7 @@ $rem
     private fun finishRecognizer(text: String?) {
         recognizer?.destroy()
         recognizer = null
+        micBusy = false
         _partialSpeech.value = ""
         _mode.value = Mode.IDLE
         if (!text.isNullOrBlank()) sendText(text)
@@ -438,6 +495,24 @@ $rem
         val reply = sendVoice(wav, forceSpeak = true)
         reply?.join()
         // espera a que termine de hablar
+        kotlinx.coroutines.delay(300)
+        speaker.speaking.first { !it }
+        micBusy = false
+        lastReplyText?.let { notifyReply(it) }
+    }
+
+    /** Manos libres con texto ya reconocido por el oído offline (más rápido que mandar audio). */
+    suspend fun handsFreeText(command: String) {
+        if (!brain.ready && models.isReady()) speaker.say("Dame un segundo, estoy despertando.", flush = true)
+        if (!ensureBrain()) {
+            speaker.say("Todavía no tengo cerebro instalado. Abre la app primero.", flush = true)
+            return
+        }
+        if (genJob?.isActive == true) return
+        micBusy = true
+        val parts = listOf(Content.Text("${stamp()} $command"))
+        val job = run(ChatMsg(role = "user", text = "🎙️ $command", kind = "voice"), parts, forceSpeak = true)
+        job?.join()
         kotlinx.coroutines.delay(300)
         speaker.speaking.first { !it }
         micBusy = false

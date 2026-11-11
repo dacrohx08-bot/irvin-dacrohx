@@ -132,6 +132,40 @@ class Speaker(ctx: Context) {
     val speaking: StateFlow<Boolean> = _speaking.asStateFlow()
     private var buffer = StringBuilder()
     var rate = 1.05f
+    var pitch = 1.0f
+
+    data class VoiceOption(val name: String, val label: String, val locale: String)
+    private val _voices = MutableStateFlow<List<VoiceOption>>(emptyList())
+    val voices: StateFlow<List<VoiceOption>> = _voices.asStateFlow()
+    private var wantedVoice: String = ""
+
+    /** Voces en español instaladas que funcionan sin internet. */
+    private fun loadVoices() {
+        try {
+            val list = tts.voices.orEmpty()
+                .filter { it.locale.language == "es" && !it.isNetworkConnectionRequired && !it.features.contains("notInstalled") }
+                .sortedWith(compareBy({ regionOrder(it.locale.country) }, { it.name }))
+            var n = 0
+            _voices.value = list.map { v ->
+                n++
+                val region = when (v.locale.country) {
+                    "MX" -> "México"; "US" -> "Latino (EE.UU.)"; "ES" -> "España"; "AR" -> "Argentina"
+                    "CO" -> "Colombia"; "" -> "Español"; else -> v.locale.country
+                }
+                VoiceOption(v.name, "Voz $n · $region", v.locale.toLanguageTag())
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun regionOrder(c: String) = when (c) { "MX" -> 0; "US" -> 1; "ES" -> 3; else -> 2 }
+
+    fun setVoice(name: String) {
+        wantedVoice = name
+        if (!ready || name.isEmpty()) return
+        try { tts.voices.orEmpty().firstOrNull { it.name == name }?.let { tts.voice = it } } catch (_: Exception) {}
+    }
+
+    fun refreshVoices() { if (ready) loadVoices() }
 
     private lateinit var tts: TextToSpeech
 
@@ -143,6 +177,8 @@ class Speaker(ctx: Context) {
                 if (mx == TextToSpeech.LANG_MISSING_DATA || mx == TextToSpeech.LANG_NOT_SUPPORTED) {
                     tts.setLanguage(Locale("es"))
                 }
+                loadVoices()
+                if (wantedVoice.isNotEmpty()) setVoice(wantedVoice)
             }
         }
         tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
@@ -179,6 +215,7 @@ class Speaker(ctx: Context) {
         val t = clean(text)
         if (t.isEmpty()) return
         tts.setSpeechRate(rate)
+        tts.setPitch(pitch)
         pending.incrementAndGet()
         tts.speak(t, if (flush) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD, null, "u" + System.nanoTime())
     }

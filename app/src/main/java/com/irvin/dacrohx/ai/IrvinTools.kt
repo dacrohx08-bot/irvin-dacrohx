@@ -7,6 +7,8 @@ import com.google.ai.edge.litertlm.ToolSet
 import com.irvin.dacrohx.data.Store
 import com.irvin.dacrohx.device.DeviceActions
 import com.irvin.dacrohx.device.IrBlaster
+import com.irvin.dacrohx.device.MusicPlayer
+import android.view.KeyEvent
 import com.irvin.dacrohx.device.ReminderScheduler
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -21,6 +23,7 @@ class IrvinTools(
     private val store: Store,
     private val device: DeviceActions,
     private val ir: IrBlaster,
+    private val music: MusicPlayer,
     private val onAction: (String) -> Unit,
 ) : ToolSet {
 
@@ -140,6 +143,53 @@ class IrvinTools(
         }
         onAction("📡 ${a.label}" + if (n > 1) " ×$n" else "")
         return err ?: "Listo: ${a.label}" + if (n > 1) " ($n veces)." else "."
+    }
+
+    @Tool(description = "Reproduce música. Busca primero en las canciones guardadas en el teléfono (funciona sin internet); si no hay, la pide a Spotify/YouTube Music/Poweramp. Úsala SIEMPRE que pidan poner música, una canción, un artista o un álbum.")
+    fun reproducirMusica(
+        @ToolParam(description = "Canción, artista o álbum. Usa 'lo que sea' si no especifican.") busqueda: String,
+    ): String {
+        val hits = music.search(busqueda)
+        if (hits.isNotEmpty()) {
+            music.playList(hits)
+            onAction("🎵 ${hits.first().label}")
+            return "Reproduciendo '${hits.first().label}'" + if (hits.size > 1) " y ${hits.size - 1} canciones más." else "."
+        }
+        val total = music.count()
+        val app = music.playFromSearchInApp(busqueda)
+        if (app != null) {
+            onAction("🎵 $app")
+            return "No hay canciones de '$busqueda' guardadas en el teléfono. Se lo pedí a $app (necesita internet). Díselo al usuario así."
+        }
+        return if (total == 0) "No encontré canciones guardadas en el teléfono (o falta el permiso de música) y no hay app de música compatible. NO digas que pusiste música."
+        else "No encontré '$busqueda' entre las $total canciones del teléfono. NO digas que pusiste música; ofrece poner otra cosa."
+    }
+
+    @Tool(description = "Controla la música que está sonando (de Irvin o de cualquier app). Acciones: pausar, reanudar, siguiente, anterior, detener.")
+    fun controlarMusica(
+        @ToolParam(description = "pausar, reanudar, siguiente, anterior o detener") accion: String,
+    ): String {
+        val a = accion.lowercase()
+        val own = music.ownActive()
+        val r = when {
+            "paus" in a || "para" in a && "dete" !in a -> { if (own) music.pause() else music.mediaKey(KeyEvent.KEYCODE_MEDIA_PAUSE); "Pausado." }
+            "reanud" in a || "sigue" in a || "play" in a || "continu" in a -> { if (own) music.resume() else music.mediaKey(KeyEvent.KEYCODE_MEDIA_PLAY); "Reanudado." }
+            "sig" in a || "next" in a || "otra" in a || "cambia" in a -> { if (own) music.next() else music.mediaKey(KeyEvent.KEYCODE_MEDIA_NEXT); "Siguiente canción." }
+            "ant" in a || "prev" in a || "regres" in a -> { if (own) music.previous() else music.mediaKey(KeyEvent.KEYCODE_MEDIA_PREVIOUS); "Canción anterior." }
+            "deten" in a || "stop" in a || "quita" in a || "apaga" in a -> { if (own) music.stop() else music.mediaKey(KeyEvent.KEYCODE_MEDIA_STOP); "Música detenida." }
+            else -> return "No conozco la acción '$accion'."
+        }
+        onAction("🎵 $r")
+        return r
+    }
+
+    @Tool(description = "Cambia el volumen multimedia del teléfono (música, videos, voz de Irvin).")
+    fun volumenTelefono(
+        @ToolParam(description = "Porcentaje de 0 a 100.") porcentaje: Int,
+    ): String {
+        val v = music.setVolume(porcentaje)
+        onAction("🔊 $v%")
+        return "Volumen al $v%."
     }
 
     @Tool(description = "Guarda cómo quiere el usuario que lo llames (su nombre o apodo).")
