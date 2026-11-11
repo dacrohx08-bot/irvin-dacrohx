@@ -68,6 +68,7 @@ import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SettingsRemote
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -687,7 +688,7 @@ fun ControlScreen(vm: Assistant) {
             }
             Spacer(Modifier.height(14.dp))
             Row(horizontalArrangement = Arrangement.Center, modifier = Modifier.fillMaxWidth()) {
-                RemoteBtn("⏻", big = true, red = true) { vm.sendIr(IrBlaster.Action.POWER) }
+                RemoteBtn("", big = true, red = true, icon = Icons.Filled.PowerSettingsNew) { vm.sendIr(IrBlaster.Action.POWER) }
             }
             Spacer(Modifier.height(12.dp))
             Row(horizontalArrangement = Arrangement.SpaceEvenly, modifier = Modifier.fillMaxWidth()) {
@@ -698,7 +699,7 @@ fun ControlScreen(vm: Assistant) {
                 }
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Spacer(Modifier.height(26.dp))
-                    RemoteBtn("🔇") { vm.sendIr(IrBlaster.Action.MUTE) }
+                    RemoteBtn("", icon = Icons.Filled.VolumeOff) { vm.sendIr(IrBlaster.Action.MUTE) }
                 }
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     RemoteBtn("CH +") { vm.sendIr(IrBlaster.Action.CH_UP) }
@@ -770,13 +771,16 @@ private fun MusicPanel(vm: Assistant) {
 }
 
 @Composable
-private fun RemoteBtn(label: String, big: Boolean = false, red: Boolean = false, onClick: () -> Unit) {
+private fun RemoteBtn(label: String, big: Boolean = false, red: Boolean = false, icon: ImageVector? = null, onClick: () -> Unit) {
     Box(
         Modifier.size(if (big) 76.dp else 64.dp).clip(CircleShape)
             .background(if (red) C.Red else C.Panel2).border(1.dp, if (red) C.Red else C.Line, CircleShape)
             .clickable { onClick() },
         contentAlignment = Alignment.Center,
-    ) { Text(label, color = Color.White, fontWeight = FontWeight.Bold, fontSize = if (big) 26.sp else 14.sp) }
+    ) {
+        if (icon != null) Icon(icon, "Botón", tint = Color.White, modifier = Modifier.size(if (big) 38.dp else 26.dp))
+        else Text(label, color = Color.White, fontWeight = FontWeight.Bold, fontSize = if (big) 26.sp else 14.sp)
+    }
 }
 
 // =====================================================================================
