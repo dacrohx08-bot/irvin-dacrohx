@@ -830,22 +830,7 @@ $rem
         })
         cont.invokeOnCancellation { finish(null) }
         // Espera a que pase el tono para que no lo confunda con tu voz.
-        viewModelScope.launch {
-            kotlinx.coroutines.delay(350)
-            if (recognizer !== sr) return@launch
-            sr.startListening(recognizerIntent())
-        }
-    }
-
-    /** Pide al reconocedor que tolere pausas al hablar (no se corte a la mitad). */
-    private fun recognizerIntent() = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-MX")
-        putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-        putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2200L)
-        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1800L)
-        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1500L)
+        viewModelScope.launch { kotlinx.coroutines.delay(350); if (!done) sr.startListening(recognizerIntent()) }
     }
 
     fun setBubble(on: Boolean) {
