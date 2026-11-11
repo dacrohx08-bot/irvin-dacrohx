@@ -155,6 +155,66 @@ class MusicPlayer(private val ctx: Context) {
         am.dispatchMediaKeyEvent(KeyEvent(t, t, KeyEvent.ACTION_UP, code, 0))
     }
 
+    data class App(val pkg: String, val label: String)
+
+    /** Apps de música instaladas que pueden reproducir por búsqueda (Poweramp, Spotify, YouTube Music...). */
+    fun musicApps(): List<App> {
+        val pm = ctx.packageManager
+        val out = LinkedHashMap<String, App>()
+        try {
+            pm.queryIntentActivities(Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH), 0).forEach {
+                val pkg = it.activityInfo.packageName
+                if (pkg == ctx.packageName || pkg.startsWith("com.google.android.googlequicksearchbox")) return@forEach
+                out[pkg] = App(pkg, it.loadLabel(pm).toString())
+            }
+        } catch (_: Exception) {}
+        for ((pkg, name) in listOf("com.maxmpz.audioplayer" to "Poweramp", "com.spotify.music" to "Spotify", "com.google.android.apps.youtube.music" to "YouTube Music")) {
+            if (pkg !in out) try { pm.getPackageInfo(pkg, 0); out[pkg] = App(pkg, name) } catch (_: Exception) {}
+        }
+        return out.values.toList()
+    }
+
+    fun findApp(name: String): App? {
+        val n = norm(name)
+        if (n.isEmpty()) return null
+        return musicApps().firstOrNull { norm(it.label).contains(n) || n.contains(norm(it.label)) }
+    }
+
+    /** Reproduce en otra app. Primero por búsqueda; si no, abre la canción encontrada en el teléfono. */
+    fun playInApp(app: App, query: String): Boolean {
+        val pm = ctx.packageManager
+        val hits = if (query.isNotBlank()) search(query) else emptyList()
+        val isArtist = hits.isNotEmpty() && norm(hits.first().artist).contains(norm(query))
+        val i = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
+            .setPackage(app.pkg)
+            .putExtra(SearchManager.QUERY, query)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        when {
+            query.isBlank() -> i.putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
+            isArtist -> i.putExtra(MediaStore.EXTRA_MEDIA_FOCUS, MediaStore.Audio.Artists.ENTRY_CONTENT_TYPE)
+                .putExtra(MediaStore.EXTRA_MEDIA_ARTIST, hits.first().artist)
+            hits.isNotEmpty() -> i.putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/audio")
+                .putExtra(MediaStore.EXTRA_MEDIA_TITLE, hits.first().title)
+                .putExtra(MediaStore.EXTRA_MEDIA_ARTIST, hits.first().artist)
+            else -> i.putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
+        }
+        if (i.resolveActivity(pm) != null) {
+            try { stop(); ctx.startActivity(i); return true } catch (_: Exception) {}
+        }
+        // Respaldo: abrir directamente el archivo de la canción en esa app.
+        hits.firstOrNull()?.let { t ->
+            val uri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, t.id)
+            val v = Intent(Intent.ACTION_VIEW).setDataAndType(uri, "audio/*").setPackage(app.pkg)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            try { stop(); ctx.startActivity(v); return true } catch (_: Exception) {}
+        }
+        // Último recurso: abrir la app.
+        pm.getLaunchIntentForPackage(app.pkg)?.let {
+            try { ctx.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); return true } catch (_: Exception) {}
+        }
+        return false
+    }
+
     /** Pide a una app de música instalada que busque y reproduzca (Spotify / YouTube Music con internet). */
     fun playFromSearchInApp(query: String): String? {
         val pm = ctx.packageManager

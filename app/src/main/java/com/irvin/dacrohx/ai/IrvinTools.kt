@@ -149,24 +149,27 @@ class IrvinTools(
         return err ?: "Listo: ${a.label}" + if (n > 1) " ($n veces)." else "."
     }
 
-    @Tool(description = "Reproduce música. Busca primero en las canciones guardadas en el teléfono (funciona sin internet); si no hay, la pide a Spotify/YouTube Music/Poweramp. Úsala SIEMPRE que pidan poner música, una canción, un artista o un álbum.")
+    @Tool(description = "Pone música (canción, artista, álbum o 'lo que sea'). Si el usuario no dijo en qué app, deja app vacío: la herramienta te dirá qué preguntar.")
     fun reproducirMusica(
-        @ToolParam(description = "Canción, artista o álbum. Usa 'lo que sea' si no especifican.") busqueda: String,
+        @ToolParam(description = "Canción, artista o álbum. 'lo que sea' si no especifican.") busqueda: String,
+        @ToolParam(description = "App donde reproducir (ej. 'Poweramp', 'Irvin'), o vacío si no lo dijo.") app: String,
     ): String {
-        val hits = music.search(busqueda)
-        if (hits.isNotEmpty()) {
-            music.playList(hits)
-            onAction("🎵 ${hits.first().label}")
-            return "Reproduciendo '${hits.first().label}'" + if (hits.size > 1) " y ${hits.size - 1} canciones más." else "."
+        val apps = music.musicApps()
+        val pref = store.settings.value.musicApp
+        val chosen = app.trim().ifEmpty {
+            when {
+                pref == "irvin" -> "Irvin"
+                pref.isNotEmpty() -> apps.firstOrNull { it.pkg == pref }?.label ?: ""
+                else -> ""
+            }
         }
-        val total = music.count()
-        val app = music.playFromSearchInApp(busqueda)
-        if (app != null) {
-            onAction("🎵 $app")
-            return "No hay canciones de '$busqueda' guardadas en el teléfono. Se lo pedí a $app (necesita internet). Díselo al usuario así."
+        if (chosen.isEmpty() && apps.isNotEmpty()) {
+            val names = apps.joinToString(", ") { it.label } + " o mi reproductor"
+            host.askMusicApp(busqueda, apps)
+            return "PREGUNTA: pregunta al usuario en qué app quiere escuchar '$busqueda': $names. Cuando responda, vuelve a usar reproducir_musica con esa app."
         }
-        return if (total == 0) "No encontré canciones guardadas en el teléfono (o falta el permiso de música) y no hay app de música compatible. NO digas que pusiste música."
-        else "No encontré '$busqueda' entre las $total canciones del teléfono. NO digas que pusiste música; ofrece poner otra cosa."
+        val target = if (chosen.lowercase().let { it.contains("irvin") || it.contains("tuyo") || it.contains("reproductor") }) null else music.findApp(chosen)
+        return host.playMusic(busqueda, target).also { onAction("🎵 " + (target?.label ?: "Irvin")) }
     }
 
     @Tool(description = "Controla la música que está sonando (de Irvin o de cualquier app). Acciones: pausar, reanudar, siguiente, anterior, detener.")

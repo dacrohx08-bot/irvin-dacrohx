@@ -404,7 +404,8 @@ fun ChatScreen(vm: Assistant, mode: Mode, brain: BrainState) {
     val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bmp -> vm.attachImage(bmp) }
 
     val lastText = chat.lastOrNull()?.text?.length ?: 0
-    LaunchedEffect(chat.size, lastText) { if (chat.isNotEmpty()) listState.animateScrollToItem(chat.size - 1) }
+    LaunchedEffect(chat.size) { if (chat.isNotEmpty()) listState.animateScrollToItem(chat.size - 1) }
+    LaunchedEffect(lastText) { if (chat.isNotEmpty() && !listState.isScrollInProgress) listState.scrollToItem(chat.size - 1, 100000) }
 
     Column(Modifier.fillMaxSize()) {
         if (brain is BrainState.Error) {
@@ -443,6 +444,30 @@ fun ChatScreen(vm: Assistant, mode: Mode, brain: BrainState) {
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 items(chat, key = { it.id }) { m -> Bubble(m, onSpeak = { vm.speak(m.text) }) }
+            }
+        }
+
+        // ---------- ¿en qué app pongo la música? ----------
+        val mc by vm.musicChoice.collectAsState()
+        mc?.let { c ->
+            var remember by remember { mutableStateOf(false) }
+            Column(
+                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp).clip(RoundedCornerShape(14.dp))
+                    .background(C.Panel).border(1.dp, C.Red, RoundedCornerShape(14.dp)).padding(10.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("🎵 ¿Dónde pongo “${c.query}”?", color = C.Txt, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                    IconButton(onClick = { vm.dismissMusicChoice() }, modifier = Modifier.size(28.dp)) { Icon(Icons.Filled.Close, "Cerrar", tint = C.Mut) }
+                }
+                @OptIn(ExperimentalLayoutApi::class)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    c.apps.forEach { a -> Chip(a.label, selected = a.label.contains("Poweramp")) { vm.chooseMusicApp(a, remember) } }
+                    Chip("Reproductor de Irvin") { vm.chooseMusicApp(null, remember) }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { remember = !remember }) {
+                    androidx.compose.material3.Checkbox(remember, { remember = it })
+                    Text("Recordar mi elección", color = C.Mut, fontSize = 13.sp)
+                }
             }
         }
 
@@ -838,6 +863,15 @@ private fun MusicPanel(vm: Assistant) {
             RoundIcon(Icons.Filled.Stop, "Detener", bg = C.Panel2) { vm.music.stop() }
         }
         Spacer(Modifier.height(6.dp))
+        val st by vm.store.settings.collectAsState()
+        val apps = remember { vm.music.musicApps() }
+        Text("Cuando pidas música:", color = C.Mut, fontSize = 13.sp)
+        @OptIn(ExperimentalLayoutApi::class)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 6.dp)) {
+            Chip("Preguntar", selected = st.musicApp.isEmpty()) { vm.store.updateSettings { it.copy(musicApp = "") } }
+            apps.forEach { a -> Chip(a.label, selected = st.musicApp == a.pkg) { vm.store.updateSettings { it.copy(musicApp = a.pkg) } } }
+            Chip("Irvin", selected = st.musicApp == "irvin") { vm.store.updateSettings { it.copy(musicApp = "irvin") } }
+        }
         Text("Volumen ${vol.toInt()}%", color = C.Mut, fontSize = 13.sp)
         Slider(value = vol, onValueChange = { vol = it; vm.music.setVolume(it.toInt()) }, valueRange = 0f..100f)
     }

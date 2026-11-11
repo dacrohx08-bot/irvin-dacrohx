@@ -48,6 +48,7 @@ data class Settings(
     val biometric: Boolean = false,
     val cloudKey: String = "",
     val cloudModel: String = "claude-sonnet-5-5",
+    val musicApp: String = "", // "" = preguntar siempre, "irvin" = reproductor propio, o paquete de la app
 )
 
 val PERSONAS = listOf(
@@ -166,6 +167,7 @@ class Store private constructor(private val ctx: Context) {
             .putBoolean("biometric", s.biometric)
             .putString("cloudKey", s.cloudKey)
             .putString("cloudModel", s.cloudModel)
+            .putString("musicApp", s.musicApp)
             .apply()
     }
 
@@ -185,6 +187,7 @@ class Store private constructor(private val ctx: Context) {
         biometric = prefs.getBoolean("biometric", false),
         cloudKey = prefs.getString("cloudKey", "") ?: "",
         cloudModel = prefs.getString("cloudModel", "claude-sonnet-5-5") ?: "claude-sonnet-5-5",
+        musicApp = prefs.getString("musicApp", "") ?: "",
     )
 
     // ---------------- persistencia JSON ----------------

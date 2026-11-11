@@ -89,6 +89,34 @@ class Assistant private constructor(private val app: Application) {
     fun cancelPending() { _pending.value = null }
     fun confirmFromUi() { val r = confirmPending(); toast(r); store.addChat(ChatMsg(role = "sys", text = "✅ $r")) }
 
+    // ---------------- elegir app de música
+    data class MusicChoice(val query: String, val apps: List<com.irvin.dacrohx.device.MusicPlayer.App>)
+    private val _musicChoice = MutableStateFlow<MusicChoice?>(null)
+    val musicChoice: StateFlow<MusicChoice?> = _musicChoice.asStateFlow()
+    fun askMusicApp(query: String, apps: List<com.irvin.dacrohx.device.MusicPlayer.App>) { _musicChoice.value = MusicChoice(query, apps) }
+
+    /** Reproduce en la app elegida (o en el reproductor de Irvin si app es null). */
+    fun playMusic(query: String, app: com.irvin.dacrohx.device.MusicPlayer.App?): String {
+        _musicChoice.value = null
+        if (app != null) {
+            return if (music.playInApp(app, query)) "Abriendo '$query' en ${app.label}."
+            else "No pude abrir ${app.label}."
+        }
+        val hits = music.search(query)
+        if (hits.isEmpty()) return "No encontré '$query' entre las canciones del teléfono. NO digas que pusiste música."
+        music.playList(hits)
+        return "Reproduciendo '${hits.first().label}' en el reproductor de Irvin."
+    }
+
+    fun chooseMusicApp(app: com.irvin.dacrohx.device.MusicPlayer.App?, remember: Boolean) {
+        val c = _musicChoice.value ?: return
+        if (remember) store.updateSettings { it.copy(musicApp = app?.pkg ?: "irvin") }
+        stopAll()
+        val r = playMusic(c.query, app)
+        store.addChat(ChatMsg(role = "sys", text = "🎵 $r"))
+    }
+    fun dismissMusicChoice() { _musicChoice.value = null }
+
     // ---------------- documento adjunto
     private val _pendingDoc = MutableStateFlow<com.irvin.dacrohx.device.Docs.Doc?>(null)
     val pendingDoc: StateFlow<com.irvin.dacrohx.device.Docs.Doc?> = _pendingDoc.asStateFlow()
@@ -225,7 +253,8 @@ Reglas:
 - Datos personales que valga la pena recordar → guardar_recuerdo. "Recuérdame…" → recordatorio_en_minutos/recordatorio_en_fecha. Música → reproducir_musica. Cuentas → calcular.
 - Conocimiento general (recetas, cómo hacer algo, explicaciones, traducciones, historia, consejos): lo sabes tú, responde directo SIN mencionar internet.
 - Datos actuales (noticias, clima, precios, dólar, resultados, horarios, algo reciente): usa las herramientas de INTERNET. Si responden SIN_INTERNET, dilo y no inventes.
-Inicio: $now (cada mensaje trae la hora entre corchetes).
+Fecha y hora al iniciar: $now. Si necesitas la hora exacta usa fecha_hora_actual. NUNCA escribas fechas ni horas entre corchetes al inicio de tus respuestas.
+- "para/pausa/detén/quita la música" = controlar_musica. Para poner música usa reproducir_musica; si responde PREGUNTA, haz esa pregunta al usuario.
 Sabes del usuario:
 $mem
 Recordatorios:
@@ -245,6 +274,37 @@ $rem
             conversationReady = true
         } catch (e: Throwable) {
             toast("No pude iniciar la conversación: ${e.message}")
+        }
+    }
+
+    /** Quita fechas/horas entre corchetes que el modelo a veces copia al inicio. */
+    private fun cleanReply(t: String): String =
+        t.replace(Regex("^\\s*\\[[^\\]]{0,48}\\]\\s*"), "").replace(Regex("\\n\\s*\\[(lun|mar|mi[eé]|jue|vie|s[aá]b|dom)[^\\]]{0,44}\\]\\s*"), "\n")
+
+    /** Órdenes simples que no necesitan pensar: se ejecutan al instante. */
+    private fun quickCommand(t: String): String? {
+        val x = java.text.Normalizer.normalize(t.lowercase(), java.text.Normalizer.Form.NFD).replace(Regex("\\p{M}"), "").trim().trimEnd('.', '!', '?')
+        val musicWord = Regex("\\b(musica|cancion|rola|poweramp|spotify)\\b").containsMatchIn(x)
+        val own = music.ownActive()
+        fun key(k: Int) = music.mediaKey(k)
+        return when {
+            musicWord && Regex("^(para|pausa|pausar|deten|detener|quita|quitar|apaga|apagar|calla)\\b").containsMatchIn(x) -> {
+                if (own) music.pause() else key(android.view.KeyEvent.KEYCODE_MEDIA_PAUSE); "Música en pausa."
+            }
+            Regex("^(siguiente cancion|otra cancion|cambia(le)? (la )?cancion|la que sigue|pasa(le)? (la )?cancion)").containsMatchIn(x) -> {
+                if (own) music.next() else key(android.view.KeyEvent.KEYCODE_MEDIA_NEXT); "Siguiente canción."
+            }
+            Regex("^(cancion anterior|regresa (la )?cancion)").containsMatchIn(x) -> {
+                if (own) music.previous() else key(android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS); "Canción anterior."
+            }
+            musicWord && Regex("^(reanuda|continua|sigue con|play|quita la pausa)").containsMatchIn(x) -> {
+                if (own) music.resume() else key(android.view.KeyEvent.KEYCODE_MEDIA_PLAY); "Reanudando."
+            }
+            Regex("^(prende|enciende) (la )?linterna$").matches(x) -> device.torch(true)
+            Regex("^apaga (la )?linterna$").matches(x) -> device.torch(false)
+            Regex("^sube(le)? (el )?volumen$").matches(x) -> "Volumen al ${music.setVolume(music.volume() + 15)}%."
+            Regex("^baja(le)? (el )?volumen$").matches(x) -> "Volumen al ${music.setVolume(music.volume() - 15)}%."
+            else -> null
         }
     }
 
@@ -272,6 +332,14 @@ $rem
         val t = text.trim()
         val img = _pendingImage.value
         val doc = _pendingDoc.value
+        if (img == null && doc == null && genJob?.isActive != true) {
+            quickCommand(t)?.let { r ->
+                store.addChat(ChatMsg(role = "user", text = t))
+                store.addChat(ChatMsg(role = "model", text = r, actions = listOf("⚡ instantáneo")))
+                if (store.settings.value.autoSpeak) speaker.say(r, flush = true)
+                return
+            }
+        }
         if (t.isEmpty() && img == null && doc == null) return
         var imgPath: String? = null
         val parts = mutableListOf<Content>()
@@ -293,7 +361,7 @@ $rem
             _pendingDoc.value = null
         }
         if (shown.isEmpty()) shown = "¿Qué ves en esta imagen?"
-        parts += Content.Text("${stamp()} $shown")
+        parts += Content.Text(shown)
         val userMsg = ChatMsg(
             role = "user", text = if (doc != null) "📄 ${doc.name}\n$shown" else shown,
             kind = if (img != null) "image" else "text", image = imgPath,
@@ -306,7 +374,7 @@ $rem
         val secs = (wav.size - 44) / (VoiceRecorder.SAMPLE_RATE * 2)
         val parts = listOf(
             Content.AudioBytes(wav),
-            Content.Text("${stamp()} (Mensaje de voz del usuario. Responde a lo que dijo.)"),
+            Content.Text("(Mensaje de voz. Responde a lo que dijo.)"),
         )
         return run(ChatMsg(role = "user", text = "🎙️ Mensaje de voz · ${secs.coerceAtLeast(1)} s", kind = "voice"), parts, forceSpeak)
     }
@@ -326,6 +394,8 @@ $rem
             val t0 = System.currentTimeMillis()
             var tFirst = 0L
             val sb = StringBuilder()
+            var fed = 0
+            var lastUi = 0L
             var failed: String? = null
             // Si la memoria de trabajo va muy llena, empieza una conversación fresca (recordando lo último).
             if (brain.tokenCount() > brain.maxTokens * 0.6) compactConversation()
@@ -337,9 +407,17 @@ $rem
                             if (delta.isNotEmpty()) {
                                 if (tFirst == 0L) tFirst = System.currentTimeMillis() - t0
                                 sb.append(delta)
-                                val shown = sb.toString()
-                                store.updateChat(reply.id) { it.copy(text = shown) }
-                                if (autoSpeak) speaker.feed(delta)
+                                val clean = cleanReply(sb.toString())
+                                // Si apenas empezó con "[", espera a ver si es una fecha para no leerla.
+                                val holding = sb.startsWith("[") && !sb.contains("]") && sb.length < 50
+                                if (!holding && autoSpeak && clean.length > fed) {
+                                    speaker.feed(clean.substring(fed)); fed = clean.length
+                                }
+                                val now = System.currentTimeMillis()
+                                if (!holding && now - lastUi > 90) {
+                                    lastUi = now
+                                    store.updateChat(reply.id) { it.copy(text = clean) }
+                                }
                             }
                         }
                 } catch (e: kotlinx.coroutines.CancellationException) {
@@ -352,10 +430,11 @@ $rem
             // Si falló sin decir nada (p. ej. memoria llena), reinicia la conversación y reintenta una vez.
             if (failed != null && sb.isEmpty()) {
                 failed = null
+                fed = 0
                 compactConversation()
                 attempt()
             }
-            val finalText = sb.toString().trim()
+            val finalText = cleanReply(sb.toString()).trim()
             val total = System.currentTimeMillis() - t0
             val speed = "⚡ %.1f s · %.1f s".format(tFirst / 1000.0, total / 1000.0)
             store.updateChat(reply.id, persist = true) { m0 ->
@@ -591,8 +670,14 @@ $rem
             return
         }
         if (genJob?.isActive == true) return
+        quickCommand(command)?.let { r ->
+            store.addChat(ChatMsg(role = "user", text = "🎙️ $command"))
+            store.addChat(ChatMsg(role = "model", text = r, actions = listOf("⚡ instantáneo")))
+            speaker.say(r, flush = true)
+            return
+        }
         micBusy = true
-        val parts = listOf(Content.Text("${stamp()} $command"))
+        val parts = listOf(Content.Text(command))
         val job = run(ChatMsg(role = "user", text = "🎙️ $command", kind = "voice"), parts, forceSpeak = true)
         job?.join()
         kotlinx.coroutines.delay(300)
