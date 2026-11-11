@@ -95,7 +95,16 @@ class Phone(private val ctx: Context) {
     }
 
     fun sms(number: String, text: String): String {
-        if (!has(Manifest.permission.SEND_SMS)) return "Falta el permiso de SMS (Ajustes → Permisos)."
+        if (!has(Manifest.permission.SEND_SMS)) {
+            // Sin permiso: abre Mensajes con el texto listo; el usuario solo toca enviar.
+            return try {
+                ctx.startActivity(
+                    Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + Uri.encode(number)))
+                        .putExtra("sms_body", text).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+                "Abrí Mensajes con el SMS escrito; solo falta tocar enviar."
+            } catch (e: Exception) { "No pude abrir Mensajes: ${e.message}" }
+        }
         return try {
             val sm = ctx.getSystemService(SmsManager::class.java)
             val parts = sm.divideMessage(text)
