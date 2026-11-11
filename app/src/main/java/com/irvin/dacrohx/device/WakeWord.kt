@@ -323,8 +323,6 @@ class WakeWordService : Service() {
             updateNotification("No pude cargar el modelo de voz.")
             return
         }
-        val grammar = grammarFor(this, wm.dir)
-        VoiceLog.add(if (grammar != null) "Oído en modo palabra clave: $grammar" else "Oído en modo libre")
         // Precarga el cerebro para responder al instante cuando lo llamen.
         withContext(Dispatchers.Main) { scope.launch(Dispatchers.Main) { assistant.ensureBrain() } }
         val rate = 16000
@@ -335,8 +333,8 @@ class WakeWordService : Service() {
 
                 // Modo "palabra clave": el oído solo compara contra estas frases, así detecta
                 // "Oye Irvin" mucho mejor con ruido o con voz bajita (y no se distrae con otras palabras).
-                val rec = try { grammar?.let { Recognizer(model, rate.toFloat(), it) } ?: Recognizer(model, rate.toFloat()) }
-                    catch (e: Exception) { Recognizer(model, rate.toFloat()) }
+                // Modo libre (el que funcionaba): el modo palabra clave dejó de detectar "Oye Irvin" en algunos teléfonos.
+                val rec = Recognizer(model, rate.toFloat())
                 val min = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
                 val ar = try {
                     AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(min, 8192))

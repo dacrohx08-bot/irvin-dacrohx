@@ -92,8 +92,8 @@ class VoiceRecorder {
                         val base = noise.coerceAtLeast(0.003f)
                         // Umbrales bajos para cuarto silencioso (voz suave o lejos del teléfono)
                         // y relativos al ruido cuando hay ruido de fondo.
-                        val talk = maxOf(0.012f, base * 2.2f)
-                        val quiet = maxOf(0.008f, base * 1.5f)
+                        val talk = maxOf(0.022f, base * 2.4f)
+                        val quiet = maxOf(0.014f, base * 1.6f)
                         if (lv > talk) {
                             loud++
                             if (loud >= 2) heardSpeech = true // 200 ms seguidos: voz, no un golpe
@@ -105,7 +105,7 @@ class VoiceRecorder {
                         speechFloor = talk
                         if (heardSpeech && silenceMs >= 1100) autoStop = true
                         if (!heardSpeech && totalMs >= 7000) autoStop = true
-                        if (totalMs >= 12000) autoStop = true
+                        if (totalMs >= 10000) autoStop = true
                     }
                     if (autoStop) {
                         running = false
