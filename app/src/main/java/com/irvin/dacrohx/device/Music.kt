@@ -175,7 +175,12 @@ class MusicPlayer(private val ctx: Context) {
         )) {
             if (pkg !in out) try { pm.getPackageInfo(pkg, 0); out[pkg] = App(pkg, name) } catch (_: Exception) {}
         }
-        return out.values.toList()
+        // Si dos apps se llaman igual, agrega una pista para distinguirlas.
+        val list = out.values.toList()
+        val dup = list.groupBy { it.label }.filter { it.value.size > 1 }.keys
+        return list.map { a ->
+            if (a.label in dup) a.copy(label = a.label + " · " + a.pkg.split('.').filter { it !in setOf("com", "android", "apps", "app", "google") }.take(2).joinToString(".")) else a
+        }
     }
 
     fun findApp(name: String): App? {

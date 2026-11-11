@@ -32,6 +32,8 @@ data class ChatMsg(
     val error: Boolean = false,
 )
 
+fun Settings.musicFavs(): List<String> = musicApp.split(",").map { it.trim() }.filter { it.isNotEmpty() }.take(2)
+
 data class Settings(
     val name: String = "",
     val persona: String = PERSONAS[0].second,
@@ -48,7 +50,7 @@ data class Settings(
     val biometric: Boolean = false,
     val cloudKey: String = "",
     val cloudModel: String = "claude-sonnet-5-5",
-    val musicApp: String = "", // "" = preguntar siempre, "irvin" = reproductor propio, o paquete de la app
+    val musicApp: String = "", // favoritos separados por coma (máx. 2): paquetes de apps o "irvin"; "" = preguntar
     val wakeSound: String = "nucleo",
 )
 

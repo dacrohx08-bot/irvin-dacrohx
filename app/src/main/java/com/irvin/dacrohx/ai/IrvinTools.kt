@@ -5,6 +5,7 @@ import com.google.ai.edge.litertlm.Tool
 import com.google.ai.edge.litertlm.ToolParam
 import com.google.ai.edge.litertlm.ToolSet
 import com.irvin.dacrohx.data.Store
+import com.irvin.dacrohx.data.musicFavs
 import com.irvin.dacrohx.device.DeviceActions
 import com.irvin.dacrohx.device.IrBlaster
 import com.irvin.dacrohx.device.MusicPlayer
@@ -152,41 +153,49 @@ class IrvinTools(
     @Tool(description = "Pone música (canción, artista, álbum o 'lo que sea'). Si el usuario no dijo en qué app, deja app vacío: la herramienta te dirá qué preguntar.")
     fun reproducirMusica(
         @ToolParam(description = "Canción, artista o álbum. 'lo que sea' si no especifican.") busqueda: String,
-        @ToolParam(description = "App donde reproducir (ej. 'Poweramp', 'Irvin'), o vacío si no lo dijo.") app: String,
+        @ToolParam(description = "App donde reproducir (ej. 'Poweramp', 'YouTube', 'Irvin'), o vacío si no lo dijo.") app: String,
     ): String {
-        val apps = music.musicApps()
-        val pref = store.settings.value.musicApp
-        val chosen = app.trim().ifEmpty {
-            when {
-                pref == "irvin" -> "Irvin"
-                pref.isNotEmpty() -> apps.firstOrNull { it.pkg == pref }?.label ?: ""
-                else -> ""
+        val all = music.musicApps()
+        fun appOf(id: String) = if (id == "irvin") null else all.firstOrNull { it.pkg == id }
+        val favs = store.settings.value.musicFavs()
+            .filter { it == "irvin" || all.any { a -> a.pkg == it } }
+        val wanted = app.trim()
+        if (wanted.isNotEmpty()) {
+            val target = if (wanted.lowercase().let { "irvin" in it || "tuyo" in it || "reproductor" in it }) null else music.findApp(wanted)
+            if (target == null && !wanted.lowercase().contains("irvin") && !wanted.lowercase().contains("reproductor") && !wanted.lowercase().contains("tuyo"))
+                return "No encontré la app '$wanted'. Opciones: " + all.joinToString { it.label } + "."
+            return host.playMusic(busqueda, target).also { onAction("🎵 " + (target?.label ?: "Irvin")) }
+        }
+        when (favs.size) {
+            1 -> { val t = appOf(favs[0]); return host.playMusic(busqueda, t).also { onAction("🎵 " + (t?.label ?: "Irvin")) } }
+            2 -> {
+                val names = favs.map { appOf(it)?.label ?: "el reproductor de Irvin" }
+                host.askMusicApp(busqueda, favs.mapNotNull { appOf(it) }, includeIrvin = "irvin" in favs)
+                return "PREGUNTA: pregunta al usuario si quiere '$busqueda' en ${names[0]} o en ${names[1]}. Cuando responda, vuelve a usar reproducir_musica con esa app."
             }
         }
-        if (chosen.isEmpty() && apps.isNotEmpty()) {
-            val names = apps.joinToString(", ") { it.label } + " o mi reproductor"
-            host.askMusicApp(busqueda, apps)
-            return "PREGUNTA: pregunta al usuario en qué app quiere escuchar '$busqueda': $names. Cuando responda, vuelve a usar reproducir_musica con esa app."
-        }
-        val target = if (chosen.lowercase().let { it.contains("irvin") || it.contains("tuyo") || it.contains("reproductor") }) null else music.findApp(chosen)
-        return host.playMusic(busqueda, target).also { onAction("🎵 " + (target?.label ?: "Irvin")) }
+        if (all.isEmpty()) return host.playMusic(busqueda, null)
+        host.askMusicApp(busqueda, all, includeIrvin = true)
+        return "PREGUNTA: pregunta al usuario en qué app quiere escuchar '$busqueda': ${all.joinToString { it.label }} o el reproductor de Irvin. Cuando responda, vuelve a usar reproducir_musica con esa app."
     }
 
-    @Tool(description = "Elige o quita el reproductor de música predeterminado del usuario (Poweramp, YouTube, YouTube Music, Spotify, Irvin). Usa 'quitar' para que vuelva a preguntar.")
+    @Tool(description = "Agrega o quita reproductores favoritos de música (máximo 2: Poweramp, YouTube, YouTube Music, Spotify, Irvin). Usa 'quitar' para borrarlos.")
     fun reproductorPredeterminado(
         @ToolParam(description = "Nombre de la app, 'Irvin' o 'quitar'.") app: String,
     ): String {
         val a = app.lowercase()
         if ("quit" in a || "borr" in a || "elimin" in a || "ningun" in a || "pregunt" in a) {
             store.updateSettings { it.copy(musicApp = "") }
-            onAction("🎵 Sin predeterminado")
-            return "Listo, ya no hay reproductor predeterminado; preguntaré cada vez."
+            onAction("🎵 Sin favoritos")
+            return "Listo, borré tus reproductores favoritos; preguntaré cada vez."
         }
-        if ("irvin" in a) { store.updateSettings { it.copy(musicApp = "irvin") }; onAction("🎵 Irvin"); return "Predeterminado: reproductor de Irvin." }
-        val found = music.findApp(app) ?: return "No encontré '$app' instalado. Opciones: " + music.musicApps().joinToString { it.label }
-        store.updateSettings { it.copy(musicApp = found.pkg) }
-        onAction("🎵 ${found.label}")
-        return "Listo: ${found.label} es tu reproductor predeterminado."
+        val id = if ("irvin" in a) "irvin" else music.findApp(app)?.pkg
+            ?: return "No encontré '$app' instalado. Opciones: " + music.musicApps().joinToString { it.label }
+        val favs = (store.settings.value.musicFavs().filter { it != id } + id).takeLast(2)
+        store.updateSettings { it.copy(musicApp = favs.joinToString(",")) }
+        val names = favs.map { f -> if (f == "irvin") "Irvin" else music.musicApps().firstOrNull { it.pkg == f }?.label ?: f }
+        onAction("🎵 " + names.joinToString(" · "))
+        return "Listo. Favoritos: " + names.joinToString(" y ") + "."
     }
 
     @Tool(description = "Controla la música que está sonando (de Irvin o de cualquier app). Acciones: pausar, reanudar, siguiente, anterior, detener.")

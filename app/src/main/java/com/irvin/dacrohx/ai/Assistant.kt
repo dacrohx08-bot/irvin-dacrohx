@@ -93,10 +93,12 @@ class Assistant private constructor(private val app: Application) {
     fun confirmFromUi() { val r = confirmPending(); toast(r); store.addChat(ChatMsg(role = "sys", text = "✅ $r")) }
 
     // ---------------- elegir app de música
-    data class MusicChoice(val query: String, val apps: List<com.irvin.dacrohx.device.MusicPlayer.App>)
+    data class MusicChoice(val query: String, val apps: List<com.irvin.dacrohx.device.MusicPlayer.App>, val includeIrvin: Boolean = true)
     private val _musicChoice = MutableStateFlow<MusicChoice?>(null)
     val musicChoice: StateFlow<MusicChoice?> = _musicChoice.asStateFlow()
-    fun askMusicApp(query: String, apps: List<com.irvin.dacrohx.device.MusicPlayer.App>) { _musicChoice.value = MusicChoice(query, apps) }
+    fun askMusicApp(query: String, apps: List<com.irvin.dacrohx.device.MusicPlayer.App>, includeIrvin: Boolean = true) {
+        _musicChoice.value = MusicChoice(query, apps, includeIrvin)
+    }
 
     /** Reproduce en la app elegida (o en el reproductor de Irvin si app es null). */
     fun playMusic(query: String, app: com.irvin.dacrohx.device.MusicPlayer.App?): String {

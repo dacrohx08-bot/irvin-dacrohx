@@ -122,6 +122,7 @@ import com.irvin.dacrohx.ai.ModelManager
 import com.irvin.dacrohx.ai.ModelState
 import com.irvin.dacrohx.data.ChatMsg
 import com.irvin.dacrohx.data.PERSONAS
+import com.irvin.dacrohx.data.musicFavs
 import com.irvin.dacrohx.device.IrBlaster
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -461,12 +462,14 @@ fun ChatScreen(vm: Assistant, mode: Mode, brain: BrainState) {
                 }
                 @OptIn(ExperimentalLayoutApi::class)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    c.apps.forEach { a -> Chip(a.label, selected = a.label.contains("Poweramp")) { vm.chooseMusicApp(a, remember) } }
-                    Chip("Reproductor de Irvin") { vm.chooseMusicApp(null, remember) }
+                    c.apps.forEach { a -> Chip(a.label) { vm.chooseMusicApp(a, remember) } }
+                    if (c.includeIrvin) Chip("Reproductor de Irvin") { vm.chooseMusicApp(null, remember) }
                 }
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { remember = !remember }) {
-                    androidx.compose.material3.Checkbox(remember, { remember = it })
-                    Text("Usar siempre (predeterminado)", color = C.Mut, fontSize = 13.sp)
+                if (vm.store.settings.value.musicFavs().isEmpty()) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { remember = !remember }) {
+                        androidx.compose.material3.Checkbox(remember, { remember = it })
+                        Text("Usar siempre esta (único favorito)", color = C.Mut, fontSize = 13.sp)
+                    }
                 }
             }
         }
@@ -988,39 +991,43 @@ fun SettingsScreen(vm: Assistant, brain: BrainState) {
 private fun MusicDefaultPanel(vm: Assistant) {
     val st by vm.store.settings.collectAsState()
     val apps = remember { vm.music.musicApps() }
-    val current = when (st.musicApp) {
-        "" -> null
-        "irvin" -> "Reproductor de Irvin"
-        else -> apps.firstOrNull { it.pkg == st.musicApp }?.label ?: "App desinstalada"
+    val favs = st.musicFavs()
+    fun label(id: String) = if (id == "irvin") "Reproductor de Irvin" else apps.firstOrNull { it.pkg == id }?.label ?: "App desinstalada"
+    fun toggle(id: String) {
+        val now = st.musicFavs()
+        val next = if (id in now) now - id else (now + id).takeLast(2)
+        vm.store.updateSettings { it.copy(musicApp = next.joinToString(",")) }
+        if (id !in now && now.size >= 2) vm.toast("Máximo 2 favoritos: reemplacé el más antiguo.")
     }
     Panel {
-        Text("Reproductor predeterminado", color = C.Txt, fontSize = 16.sp)
+        Text("Reproductores favoritos (hasta 2)", color = C.Txt, fontSize = 16.sp)
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
             Text(
-                current?.let { "🎵 $it" } ?: "Ninguno: Irvin te pregunta cada vez",
-                color = if (current != null) C.Ok else C.Mut, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+                if (favs.isEmpty()) "Ninguno: Irvin te pregunta cada vez" else "🎵 " + favs.joinToString("  ·  ") { label(it) },
+                color = if (favs.isNotEmpty()) C.Ok else C.Mut, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.weight(1f),
             )
-            if (current != null) OutlinedButton(onClick = {
+            if (favs.isNotEmpty()) OutlinedButton(onClick = {
                 vm.store.updateSettings { it.copy(musicApp = "") }
-                vm.toast("Predeterminado eliminado. Irvin preguntará en qué app poner la música.")
+                vm.toast("Favoritos borrados. Irvin preguntará en qué app poner la música.")
             }) { Text("Quitar", color = C.Red2) }
         }
-        Spacer(Modifier.height(10.dp))
-        Text("Elegir otro:", color = C.Mut, fontSize = 13.sp)
+        Text(
+            when (favs.size) {
+                0 -> "Toca 1 o 2 apps para marcarlas como favoritas."
+                1 -> "Con 1 favorito, la música se pone directo ahí. Puedes marcar uno más."
+                else -> "Con 2 favoritos, Irvin te pregunta: “¿${label(favs[0])} o ${label(favs[1])}?”"
+            },
+            color = C.Mut, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp),
+        )
+        Spacer(Modifier.height(8.dp))
         @OptIn(ExperimentalLayoutApi::class)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 6.dp)) {
-            apps.forEach { a ->
-                Chip(a.label, selected = st.musicApp == a.pkg) {
-                    vm.store.updateSettings { it.copy(musicApp = a.pkg) }; vm.toast("${a.label} es tu reproductor predeterminado.")
-                }
-            }
-            Chip("Reproductor de Irvin", selected = st.musicApp == "irvin") {
-                vm.store.updateSettings { it.copy(musicApp = "irvin") }; vm.toast("Usaré el reproductor de Irvin.")
-            }
+            apps.forEach { a -> Chip((if (a.pkg in favs) "★ " else "") + a.label, selected = a.pkg in favs) { toggle(a.pkg) } }
+            Chip((if ("irvin" in favs) "★ " else "") + "Reproductor de Irvin", selected = "irvin" in favs) { toggle("irvin") }
         }
         if (apps.isEmpty()) Text("No encontré apps de música compatibles instaladas.", color = C.Warn, fontSize = 12.sp)
-        Text("También por voz: “pon Poweramp como predeterminado” o “quita mi reproductor predeterminado”.", color = C.Mut, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+        Text("Por voz: “agrega Poweramp a favoritos” o “quita mis reproductores favoritos”.", color = C.Mut, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
     }
 }
 
