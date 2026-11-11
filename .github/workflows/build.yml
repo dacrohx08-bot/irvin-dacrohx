@@ -46,7 +46,6 @@ jobs:
           tag_name: v1.0.${{ github.run_number }}
           name: Irvin Dacrohx v1.0.${{ github.run_number }}
           body: |
-            Descarga **IrvinDacrohx.apk** desde tu teléfono e instálalo.
-            La primera vez la app descarga el cerebro (3.7 GB); después funciona sin internet.
+            ${{ github.event.head_commit.message }}
           files: IrvinDacrohx.apk
           make_latest: true

@@ -13,8 +13,10 @@ android {
         applicationId = "com.irvin.dacrohx"
         minSdk = 31
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        // Cada compilación en GitHub sube la versión sola (v1.0.N)
+        val run = (System.getenv("GITHUB_RUN_NUMBER") ?: "0").toInt()
+        versionCode = run
+        versionName = "1.0.$run"
         ndk { abiFilters += listOf("arm64-v8a") }
     }
 
@@ -42,7 +44,10 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
     }
 
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
 
     packaging {
         jniLibs {

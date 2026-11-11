@@ -72,6 +72,13 @@ class Assistant private constructor(private val app: Application) {
     val music = com.irvin.dacrohx.device.MusicPlayer(app)
     val turbo = ModelManager(app, ModelManager.E2B)
     val online = com.irvin.dacrohx.device.Online(app)
+    val updater = com.irvin.dacrohx.device.Updater(app)
+
+    fun checkUpdates(silent: Boolean = false) = viewModelScope.launch { updater.check(silent) }
+    fun downloadUpdate(r: com.irvin.dacrohx.device.Updater.Release) = viewModelScope.launch {
+        stopAll()
+        updater.download(r)
+    }
 
     /** El modelo que se usa: el turbo si está activado y descargado. */
     private fun activeModel(): ModelManager =
@@ -112,6 +119,7 @@ class Assistant private constructor(private val app: Application) {
         viewModelScope.launch { models.watchDownload() }
         viewModelScope.launch { wake.watch() }
         viewModelScope.launch { turbo.watchDownload() }
+        viewModelScope.launch { kotlinx.coroutines.delay(4000); updater.check(silent = true) }
         viewModelScope.launch {
             store.settings.collect { st ->
                 speaker.rate = st.speechRate

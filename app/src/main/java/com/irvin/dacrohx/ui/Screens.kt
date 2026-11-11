@@ -240,6 +240,7 @@ fun MainShell(vm: Assistant) {
 
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
         Header(mode, brain, level, onOrb = { vm.stopAll() })
+        UpdateBanner(vm)
         Box(Modifier.weight(1f)) {
             when (tab) {
                 Tab.CHAT -> ChatScreen(vm, mode, brain)
@@ -851,12 +852,15 @@ fun SettingsScreen(vm: Assistant, brain: BrainState) {
             }
         }
 
+        Label("Actualizaciones")
+        UpdatePanel(vm)
+
         Label("Zona de peligro")
         OutlinedButton(onClick = { confirmClear = true }, modifier = Modifier.fillMaxWidth()) { Text("Nueva conversación (borrar chat)", color = C.Red2) }
         Spacer(Modifier.height(8.dp))
         OutlinedButton(onClick = { confirmModel = true }, modifier = Modifier.fillMaxWidth()) { Text("Borrar el cerebro descargado", color = C.Red2) }
         Spacer(Modifier.height(20.dp))
-        Text("IRVIN DACROHX v1.0 · hecho para RedMagic 11 Pro", color = C.Mut, fontSize = 12.sp)
+        Text("IRVIN DACROHX v${vm.updater.currentName} · hecho para RedMagic 11 Pro", color = C.Mut, fontSize = 12.sp)
         Text("Tip: en Ajustes de RedMagic asigna la Magic Key para abrir Irvin, o mantén presionado su ícono → “Hablar con Irvin”.", color = C.Mut, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
         Spacer(Modifier.height(20.dp))
     }
@@ -864,6 +868,59 @@ fun SettingsScreen(vm: Assistant, brain: BrainState) {
     if (confirmClear) Confirm("¿Borrar toda la conversación? Tus recuerdos y recordatorios se quedan.", { confirmClear = false }) { vm.newChat() }
     if (confirmModel) Confirm("¿Borrar el modelo (3.7 GB)? Tendrás que descargarlo otra vez.", { confirmModel = false }) {
         vm.deleteModel()
+    }
+}
+
+@Composable
+private fun UpdateBanner(vm: Assistant) {
+    val st by vm.updater.state.collectAsState()
+    val text = when (val s = st) {
+        is com.irvin.dacrohx.device.Updater.State.Available -> "Nueva versión ${s.r.name} disponible"
+        is com.irvin.dacrohx.device.Updater.State.Downloading -> "Descargando actualización… ${s.pct}%"
+        is com.irvin.dacrohx.device.Updater.State.ReadyToInstall -> "Actualización lista para instalar"
+        else -> return
+    }
+    Row(
+        Modifier.fillMaxWidth().background(C.RedDim).padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("⬆️ $text", color = C.Txt, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+        when (val s = st) {
+            is com.irvin.dacrohx.device.Updater.State.Available ->
+                TextButton(onClick = { vm.downloadUpdate(s.r) }) { Text("ACTUALIZAR", color = C.Red2, fontWeight = FontWeight.Bold) }
+            is com.irvin.dacrohx.device.Updater.State.ReadyToInstall ->
+                TextButton(onClick = { vm.updater.install() }) { Text("INSTALAR", color = C.Red2, fontWeight = FontWeight.Bold) }
+            else -> {}
+        }
+    }
+}
+
+@Composable
+private fun UpdatePanel(vm: Assistant) {
+    val st by vm.updater.state.collectAsState()
+    Panel {
+        Text("Versión instalada: v${vm.updater.currentName}", color = C.Txt, fontSize = 15.sp)
+        val (msg, color) = when (val s = st) {
+            is com.irvin.dacrohx.device.Updater.State.Checking -> "Buscando…" to C.Mut
+            is com.irvin.dacrohx.device.Updater.State.UpToDate -> "Tienes la versión más reciente ✓" to C.Ok
+            is com.irvin.dacrohx.device.Updater.State.Available -> "Disponible: ${s.r.name} (${"%.0f".format(s.r.size / 1e6)} MB)" to C.Red2
+            is com.irvin.dacrohx.device.Updater.State.Downloading -> "Descargando ${s.r.name}… ${s.pct}%" to C.Warn
+            is com.irvin.dacrohx.device.Updater.State.ReadyToInstall -> "Lista para instalar" to C.Ok
+            is com.irvin.dacrohx.device.Updater.State.Failed -> s.reason to C.Warn
+            else -> "" to C.Mut
+        }
+        if (msg.isNotEmpty()) Text(msg, color = color, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
+        (st as? com.irvin.dacrohx.device.Updater.State.Available)?.r?.notes?.takeIf { it.isNotBlank() }?.let {
+            Text(it, color = C.Mut, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+        }
+        Spacer(Modifier.height(10.dp))
+        when (val s = st) {
+            is com.irvin.dacrohx.device.Updater.State.Available -> RedButton("Actualizar ahora") { vm.downloadUpdate(s.r) }
+            is com.irvin.dacrohx.device.Updater.State.ReadyToInstall -> RedButton("Instalar") { vm.updater.install() }
+            is com.irvin.dacrohx.device.Updater.State.Downloading -> {}
+            else -> OutlinedButton(onClick = { vm.checkUpdates() }, modifier = Modifier.fillMaxWidth()) { Text("Buscar actualización") }
+        }
+        Text("Se instala encima: no pierdes el cerebro, tus recuerdos ni tus ajustes.", color = C.Mut, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
     }
 }
 
