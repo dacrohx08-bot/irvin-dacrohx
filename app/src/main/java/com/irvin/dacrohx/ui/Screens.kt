@@ -146,8 +146,38 @@ fun IrvinRoot(vm: Assistant) {
     val modelState by vm.models.state.collectAsState()
     val toast by vm.toast.collectAsState()
 
+    val ctx = LocalContext.current
+    var crash by remember { mutableStateOf(com.irvin.dacrohx.IrvinApp.takeLastCrash(ctx.applicationContext as android.app.Application)) }
+
     Box(Modifier.fillMaxSize().background(C.Bg)) {
         if (modelState !is ModelState.Ready) SetupScreen(vm, modelState) else MainShell(vm)
+
+        crash?.let { report ->
+            AlertDialog(
+                onDismissRequest = { crash = null },
+                containerColor = C.Panel,
+                title = { Text("La app se cerró la última vez") },
+                text = {
+                    Column {
+                        Text("Copia este detalle y mándaselo a Claude para arreglarlo:", color = C.Mut, fontSize = 14.sp)
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            report.take(1500), color = C.Txt, fontSize = 11.sp, fontFamily = FontFamily.Monospace,
+                            modifier = Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()),
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        val cm = ctx.getSystemService(android.content.ClipboardManager::class.java)
+                        cm.setPrimaryClip(android.content.ClipData.newPlainText("Error de Irvin", report))
+                        vm.toast("Copiado. Pégalo en el chat con Claude.")
+                        crash = null
+                    }) { Text("Copiar", color = C.Red2) }
+                },
+                dismissButton = { TextButton(onClick = { crash = null }) { Text("Cerrar") } },
+            )
+        }
 
         // toast propio
         toast?.let { msg ->

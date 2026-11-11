@@ -21,11 +21,13 @@ class Online(private val ctx: Context) {
         const val NO_NET = "SIN_INTERNET: el teléfono no tiene conexión ahora. Díselo al usuario y responde con lo que sepas sin inventar datos actuales."
     }
 
-    fun connected(): Boolean {
-        val cm = ctx.getSystemService(ConnectivityManager::class.java) ?: return false
-        val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
-        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+    fun connected(): Boolean = try {
+        val cm = ctx.getSystemService(ConnectivityManager::class.java)
+        val caps = cm?.getNetworkCapabilities(cm.activeNetwork)
+        caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
             caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    } catch (e: Exception) {
+        true // si no se puede saber, intentamos de todos modos
     }
 
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
