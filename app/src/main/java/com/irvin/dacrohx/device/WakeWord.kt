@@ -289,7 +289,6 @@ class WakeWordService : Service() {
                 ar.startRecording()
                 val buf = ByteArray(4096)
                 var woke = false
-                var command = ""
                 val fast = assistant.store.settings.value.fastVoice
                 while (scope.isActive && !assistant.micBusy && assistant.mode.value == com.irvin.dacrohx.ai.Mode.IDLE) {
                     val n = ar.read(buf, 0, buf.size)
@@ -303,51 +302,18 @@ class WakeWordService : Service() {
                     }
                 }
 
-                if (woke && fast) {
-                    // Sigue escuchando con el mismo oído para capturar la orden (rápido y offline).
-                    acquireWake()
-                    beep()
-                    updateNotification("Te escucho…")
-                    rec.reset()
-                    val t0 = System.currentTimeMillis()
-                    var lastVoice = t0
-                    var partial = ""
-                    while (scope.isActive) {
-                        val n = ar.read(buf, 0, buf.size)
-                        if (n <= 0) continue
-                        val now = System.currentTimeMillis()
-                        if (rec.acceptWaveForm(buf, n)) {
-                            val t = JSONObject(rec.result).optString("text").trim()
-                            if (t.isNotEmpty()) { command = t; break }
-                        } else {
-                            val p = JSONObject(rec.partialResult).optString("partial").trim()
-                            if (p != partial) { partial = p; lastVoice = now }
-                        }
-                        if (partial.isEmpty() && now - t0 > 7000) break
-                        if (partial.isNotEmpty() && now - lastVoice > 2000) { command = partial; break }
-                        if (now - t0 > 15000) { command = partial; break }
-                    }
-                    if (command.isEmpty()) command = JSONObject(rec.finalResult).optString("text").trim()
-                    if (command.isNotEmpty()) assistant.sounds.end(assistant.store.settings.value.wakeSound)
-                }
                 try { ar.stop() } catch (_: Exception) {}
                 ar.release()
                 rec.close()
 
                 if (woke) {
-                    Log.i("Irvin", "¡Oye Irvin detectado! orden='$command'")
-                    if (!fast) {
-                        acquireWake()
-                        beep()
-                        updateNotification("Te escucho…")
-                        delay(250)
-                    }
+                    Log.i("Irvin", "¡Oye Irvin detectado!")
+                    // El oído pequeño solo detecta el nombre; la orden la escucha un reconocedor preciso.
+                    acquireWake()
+                    updateNotification("Te escucho…")
                     withContext(Dispatchers.Main) {
                         try {
-                            if (fast) {
-                                if (command.isBlank()) assistant.speaker.say("¿Sí? No te escuché.", flush = true)
-                                else assistant.handsFreeText(command)
-                            } else assistant.handsFreeTurn()
+                            if (fast) assistant.quickVoiceTurn() else { beep(); delay(300); assistant.handsFreeTurn() }
                         } catch (e: Exception) { Log.w("Irvin", "turno", e) }
                     }
                     updateNotification("Di “Oye Irvin” y te escucho.")

@@ -113,6 +113,50 @@ class Assistant private constructor(private val app: Application) {
         return "Reproduciendo '${hits.first().label}' en el reproductor de Irvin."
     }
 
+    /** Pide música respetando los favoritos (1 = directo, 2 = pregunta entre ellos). */
+    fun requestMusic(query: String, appName: String): String {
+        val all = music.musicApps()
+        fun appOf(id: String) = if (id == "irvin") null else all.firstOrNull { it.pkg == id }
+        val q = query.trim().ifEmpty { "lo que sea" }
+        val wanted = appName.trim().lowercase()
+        if (wanted.isNotEmpty()) {
+            if ("irvin" in wanted || "reproductor" in wanted || "tuyo" in wanted) return playMusic(q, null)
+            val t = music.findApp(if (wanted == "premium") "youtube" else wanted)
+                ?: return "No encontré la app '$appName'. Tengo: " + all.joinToString { it.label } + "."
+            return playMusic(q, t)
+        }
+        val favs = store.settings.value.let { st ->
+            st.musicApp.split(",").map { it.trim() }.filter { it.isNotEmpty() }.take(2)
+        }.filter { it == "irvin" || all.any { a -> a.pkg == it } }
+        return when (favs.size) {
+            1 -> playMusic(q, appOf(favs[0]))
+            2 -> {
+                askMusicApp(q, favs.mapNotNull { appOf(it) }, includeIrvin = "irvin" in favs)
+                val names = favs.map { appOf(it)?.label ?: "el reproductor de Irvin" }
+                "PREGUNTA: ¿${names[0]} o ${names[1]}?"
+            }
+            else -> if (all.isEmpty()) playMusic(q, null) else {
+                askMusicApp(q, all, includeIrvin = true); "PREGUNTA: ¿En qué app la pongo?"
+            }
+        }
+    }
+
+    /** Detecta "pon música de X en Y" y devuelve (búsqueda, app) o null. */
+    private fun parseMusic(x: String): Pair<String, String>? {
+        val m = Regex("^(pon|ponme|ponle|reproduce|reproducir|toca|tocame|quiero (escuchar|oir)|escuchar|pones)\\s+(.*)$").find(x) ?: return null
+        var rest = m.groupValues[3].trim()
+        if (Regex("^(la |el )?(alarma|recordatorio|timer|temporizador|linterna|volumen)").containsMatchIn(rest)) return null
+        val apps = "poweramp|power amp|youtube premium|youtube music|yt music|youtube|you tube|premium|spotify|reproductor de irvin|tu reproductor|irvin"
+        var app = ""
+        Regex("\\s+(en|con|desde|por)\\s+($apps)\\s*$").find(rest)?.let { app = it.groupValues[2]; rest = rest.substring(0, it.range.first) }
+        if (app.isEmpty()) Regex("^($apps)\\s+(.*)$").find(rest)?.let { app = it.groupValues[1]; rest = it.groupValues[2] }
+        val stripped = rest.replace(Regex("^(algo de |un poco de |unas? |la |el |las |los )"), "")
+            .replace(Regex("^(musica|canciones|cancion|rolas|rola|temas|tema)(\\s+(de|del|a|al))?\\s*"), "").trim()
+        val isMusic = Regex("\\b(musica|cancion|canciones|rola|rolas|disco|album|tema)\\b").containsMatchIn(rest) || app.isNotEmpty()
+        if (!isMusic) return null
+        return stripped.ifEmpty { "lo que sea" } to app.replace("power amp", "poweramp").replace("you tube", "youtube")
+    }
+
     fun chooseMusicApp(app: com.irvin.dacrohx.device.MusicPlayer.App?, remember: Boolean) {
         val c = _musicChoice.value ?: return
         if (remember) store.updateSettings { it.copy(musicApp = app?.pkg ?: "irvin") }
@@ -291,6 +335,20 @@ $rem
     /** Órdenes simples que no necesitan pensar: se ejecutan al instante. */
     private fun quickCommand(t: String): String? {
         val x = java.text.Normalizer.normalize(t.lowercase(), java.text.Normalizer.Form.NFD).replace(Regex("\\p{M}"), "").replace(Regex("[¿¡?!.,;:]"), " ").replace(Regex("\\s+"), " ").trim()
+        // Respuesta a "¿Poweramp o YouTube?": basta con decir el nombre.
+        _musicChoice.value?.let { c ->
+            val y = x.replace(Regex("^(en|con|el|la|pon(lo|la)? en|mejor en)\\s+"), "").trim()
+            if ("irvin" in y || "tuyo" in y || y == "reproductor") { chooseMusicApp(null, false); return "Listo." }
+            val pick = c.apps.firstOrNull { a ->
+                val l = java.text.Normalizer.normalize(a.label.lowercase(), java.text.Normalizer.Form.NFD).replace(Regex("\\p{M}"), "")
+                l == y || (y.length >= 4 && (l.contains(y) || y.contains(l))) || (y == "premium" && "premium" in l) || (y == "power" && "poweramp" in l)
+            }
+            if (pick != null) { chooseMusicApp(pick, false); return "Listo, en ${pick.label}." }
+        }
+        parseMusic(x)?.let { (q, app) ->
+            val r = requestMusic(q, app)
+            return if (r.startsWith("PREGUNTA:")) r.removePrefix("PREGUNTA: ") else r
+        }
         val musicWord = Regex("\\b(musica|cancion|rola|poweramp|spotify)\\b").containsMatchIn(x)
         val own = music.ownActive()
         fun key(k: Int) = music.mediaKey(k)

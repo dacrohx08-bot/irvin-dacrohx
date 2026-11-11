@@ -150,33 +150,14 @@ class IrvinTools(
         return err ?: "Listo: ${a.label}" + if (n > 1) " ($n veces)." else "."
     }
 
-    @Tool(description = "Pone música (canción, artista, álbum o 'lo que sea'). Si el usuario no dijo en qué app, deja app vacío: la herramienta te dirá qué preguntar.")
+    @Tool(description = "Pone música (canción, artista, álbum o 'lo que sea'). Úsala SIEMPRE que pidan música; si no dicen qué, usa 'lo que sea'. Si no dicen la app, deja app vacío.")
     fun reproducirMusica(
         @ToolParam(description = "Canción, artista o álbum. 'lo que sea' si no especifican.") busqueda: String,
         @ToolParam(description = "App donde reproducir (ej. 'Poweramp', 'YouTube', 'Irvin'), o vacío si no lo dijo.") app: String,
     ): String {
-        val all = music.musicApps()
-        fun appOf(id: String) = if (id == "irvin") null else all.firstOrNull { it.pkg == id }
-        val favs = store.settings.value.musicFavs()
-            .filter { it == "irvin" || all.any { a -> a.pkg == it } }
-        val wanted = app.trim()
-        if (wanted.isNotEmpty()) {
-            val target = if (wanted.lowercase().let { "irvin" in it || "tuyo" in it || "reproductor" in it }) null else music.findApp(wanted)
-            if (target == null && !wanted.lowercase().contains("irvin") && !wanted.lowercase().contains("reproductor") && !wanted.lowercase().contains("tuyo"))
-                return "No encontré la app '$wanted'. Opciones: " + all.joinToString { it.label } + "."
-            return host.playMusic(busqueda, target).also { onAction("🎵 " + (target?.label ?: "Irvin")) }
-        }
-        when (favs.size) {
-            1 -> { val t = appOf(favs[0]); return host.playMusic(busqueda, t).also { onAction("🎵 " + (t?.label ?: "Irvin")) } }
-            2 -> {
-                val names = favs.map { appOf(it)?.label ?: "el reproductor de Irvin" }
-                host.askMusicApp(busqueda, favs.mapNotNull { appOf(it) }, includeIrvin = "irvin" in favs)
-                return "PREGUNTA: pregunta al usuario si quiere '$busqueda' en ${names[0]} o en ${names[1]}. Cuando responda, vuelve a usar reproducir_musica con esa app."
-            }
-        }
-        if (all.isEmpty()) return host.playMusic(busqueda, null)
-        host.askMusicApp(busqueda, all, includeIrvin = true)
-        return "PREGUNTA: pregunta al usuario en qué app quiere escuchar '$busqueda': ${all.joinToString { it.label }} o el reproductor de Irvin. Cuando responda, vuelve a usar reproducir_musica con esa app."
+        val r = host.requestMusic(busqueda, app)
+        onAction("🎵 " + busqueda.take(30))
+        return if (r.startsWith("PREGUNTA:")) r + " Haz esa pregunta corta al usuario. Cuando responda, vuelve a usar reproducir_musica con esa app." else r
     }
 
     @Tool(description = "Agrega o quita reproductores favoritos de música (máximo 2: Poweramp, YouTube, YouTube Music, Spotify, Irvin). Usa 'quitar' para borrarlos.")
