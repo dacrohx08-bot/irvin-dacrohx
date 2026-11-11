@@ -32,8 +32,10 @@ class NotifListener : NotificationListenerService() {
             "org.thoughtcrime.securesms",
         )
         private val lock = Any()
-        @Volatile var connected = false
-            private set
+        private val _connected = kotlinx.coroutines.flow.MutableStateFlow(false)
+        /** Se actualiza en vivo para que Ajustes muestre el estado real. */
+        val connectedFlow: kotlinx.coroutines.flow.StateFlow<Boolean> = _connected
+        val connected: Boolean get() = _connected.value
 
         fun enabled(ctx: Context): Boolean {
             val flat = Settings.Secure.getString(ctx.contentResolver, "enabled_notification_listeners") ?: return false
@@ -44,10 +46,29 @@ class NotifListener : NotificationListenerService() {
         /** Último mensaje detectado y qué hizo Irvin (para diagnóstico en Ajustes). */
         @Volatile var lastEvent: String = "Todavía no ha llegado ningún mensaje desde que se abrió Irvin."
 
-        /** Pide a Android que vuelva a conectar el lector de notificaciones (tras actualizar la app). */
-        fun rebind(ctx: Context) {
-            if (!enabled(ctx)) return
-            try { requestRebind(ComponentName(ctx, NotifListener::class.java)) } catch (_: Exception) {}
+        /**
+         * Vuelve a conectar el lector. Al actualizar Irvin, Android lo desconecta y en algunos
+         * teléfonos (RedMagic/Nubia) no lo reconecta solo: si [force], apaga y prende el
+         * componente, lo que obliga a Android a conectarlo de nuevo.
+         */
+        fun rebind(ctx: Context, force: Boolean = false) {
+            if (!enabled(ctx) || connected) return
+            val cn = ComponentName(ctx, NotifListener::class.java)
+            try { requestRebind(cn) } catch (_: Exception) {}
+            if (!force) return
+            try {
+                val pm = ctx.packageManager
+                pm.setComponentEnabledSetting(cn, android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED, android.content.pm.PackageManager.DONT_KILL_APP)
+                pm.setComponentEnabledSetting(cn, android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED, android.content.pm.PackageManager.DONT_KILL_APP)
+                requestRebind(cn)
+            } catch (_: Exception) {}
+        }
+
+        /** Reconexión automática: primero suave y, si a los 4 s sigue desconectado, forzada. */
+        fun ensureConnected(ctx: Context) {
+            if (!enabled(ctx) || connected) return
+            rebind(ctx)
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ if (!connected) rebind(ctx, force = true) }, 4000)
         }
 
         fun openSettings(ctx: Context) {
@@ -93,12 +114,16 @@ class NotifListener : NotificationListenerService() {
     private var connectedAt = 0L
 
     override fun onListenerConnected() {
-        connected = true
+        _connected.value = true
         connectedAt = System.currentTimeMillis()
         try { activeNotifications?.forEach { add(it) } } catch (_: Exception) {}
     }
 
-    override fun onListenerDisconnected() { connected = false }
+    override fun onListenerDisconnected() {
+        _connected.value = false
+        // Android lo soltó (ahorro de batería o actualización): pide volver a conectarlo.
+        try { requestRebind(ComponentName(this, NotifListener::class.java)) } catch (_: Exception) {}
+    }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) { add(sbn) }
 

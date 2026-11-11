@@ -1078,9 +1078,10 @@ private fun AnnouncePanel(vm: Assistant) {
         Spacer(Modifier.height(12.dp))
         var tick by remember { mutableIntStateOf(0) }
         LaunchedEffect(tick) { }
+        val listening by com.irvin.dacrohx.device.NotifListener.connectedFlow.collectAsState()
         Text(
-            if (!notifOk) "⚠️ Irvin no tiene acceso a notificaciones" else if (com.irvin.dacrohx.device.NotifListener.connected) "● Lector de notificaciones conectado" else "○ Lector de notificaciones desconectado",
-            color = if (notifOk && com.irvin.dacrohx.device.NotifListener.connected) C.Ok else C.Warn, fontSize = 13.sp,
+            if (!notifOk) "⚠️ Irvin no tiene acceso a notificaciones" else if (listening) "● Lector de notificaciones conectado" else "○ Lector desconectado: toca Reconectar",
+            color = if (notifOk && listening) C.Ok else C.Warn, fontSize = 13.sp,
         )
         Text("Último mensaje: " + com.irvin.dacrohx.device.NotifListener.lastEvent + if (tick < 0) "" else "", color = C.Mut, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
         Row(Modifier.padding(top = 6.dp)) {
@@ -1091,7 +1092,8 @@ private fun AnnouncePanel(vm: Assistant) {
             Spacer(Modifier.width(8.dp))
             OutlinedButton(onClick = {
                 if (!notifOk) com.irvin.dacrohx.device.NotifListener.openSettings(ctx)
-                else { com.irvin.dacrohx.device.NotifListener.rebind(ctx); vm.toast("Reconectando el lector…") }
+                else if (listening) vm.toast("El lector ya está conectado.")
+                else { com.irvin.dacrohx.device.NotifListener.rebind(ctx, force = true); vm.toast("Reconectando el lector…") }
                 tick++
             }) { Text(if (notifOk) "Reconectar" else "Dar acceso") }
         }

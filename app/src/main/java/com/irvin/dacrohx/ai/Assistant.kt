@@ -327,7 +327,7 @@ class Assistant private constructor(private val app: Application) {
             models.state.collect { if (it is ModelState.Ready && brain.state.value is BrainState.Off) bootBrain() }
         }
         ReminderScheduler.rescheduleAll(app)
-        com.irvin.dacrohx.device.NotifListener.rebind(app)
+        com.irvin.dacrohx.device.NotifListener.ensureConnected(app)
         val nm = app.getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
             android.app.NotificationChannel(CH_REPLY, "Respuestas de Irvin", NotificationManager.IMPORTANCE_DEFAULT)

@@ -47,6 +47,7 @@ class MainActivity : FragmentActivity() {
         super.onResume()
         vm.uiVisible = true
         startServicesIfEnabled()
+        com.irvin.dacrohx.device.NotifListener.ensureConnected(this)
         if (vm.locked.value) authenticate()
     }
 
