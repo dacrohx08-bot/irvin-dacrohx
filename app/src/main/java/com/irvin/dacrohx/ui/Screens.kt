@@ -993,7 +993,35 @@ fun SettingsScreen(vm: Assistant, brain: BrainState) {
 private fun PermissionsPanel(vm: Assistant) {
     val ctx = LocalContext.current
     var tick by remember { mutableIntStateOf(0) }
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { tick++ }
+    var restrictedHelp by remember { mutableStateOf(false) }
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { res ->
+        tick++
+        // Android bloquea SMS en apps instaladas fuera de la tienda: mostrar cómo desbloquearlo.
+        if (res.keys.contains(android.Manifest.permission.SEND_SMS) && res.values.any { !it }) restrictedHelp = true
+    }
+    if (restrictedHelp) AlertDialog(
+        onDismissRequest = { restrictedHelp = false },
+        containerColor = C.Panel,
+        title = { Text("Android bloqueó este permiso") },
+        text = {
+            Text(
+                "Por seguridad, Android bloquea SMS y notificaciones en apps instaladas fuera de la Play Store.\n\n" +
+                    "1. Toca “Abrir información de la app”.\n2. Toca los tres puntitos ⋮ arriba a la derecha.\n" +
+                    "3. Elige “Permitir ajustes restringidos” y confirma.\n4. Regresa aquí y toca Permitir otra vez.",
+                color = C.Txt, fontSize = 14.sp,
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                restrictedHelp = false
+                ctx.startActivity(
+                    android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:" + ctx.packageName))
+                        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            }) { Text("Abrir información de la app", color = C.Red2) }
+        },
+        dismissButton = { TextButton(onClick = { restrictedHelp = false }) { Text("Cerrar") } },
+    )
     androidx.lifecycle.compose.LifecycleResumeEffect(Unit) { tick++; onPauseOrDispose { } }
     fun has(p: String) = androidx.core.content.ContextCompat.checkSelfPermission(ctx, p) == android.content.pm.PackageManager.PERMISSION_GRANTED
     val rows = listOf(
@@ -1011,7 +1039,12 @@ private fun PermissionsPanel(vm: Assistant) {
         val notifOk = tick >= 0 && com.irvin.dacrohx.device.NotifListener.enabled(ctx)
         PermRow("Leer notificaciones", "“¿Qué me escribieron en WhatsApp?”", notifOk) {
             com.irvin.dacrohx.device.NotifListener.openSettings(ctx)
+            vm.toast("Activa Irvin Dacrohx. Si sale gris o bloqueado: Información de la app → ⋮ → Permitir ajustes restringidos.")
         }
+        if (!notifOk || !has(android.Manifest.permission.SEND_SMS)) Text(
+            "¿No te deja activar SMS o notificaciones? Información de la app → ⋮ → “Permitir ajustes restringidos”.",
+            color = C.Warn, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp),
+        )
     }
 }
 
