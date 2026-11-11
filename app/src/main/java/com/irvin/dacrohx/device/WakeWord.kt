@@ -277,7 +277,7 @@ class WakeWordService : Service() {
         try {
             while (scope.isActive) {
                 // Si la app está usando el micrófono, espera.
-                while ((assistant.micBusy || assistant.mode.value != com.irvin.dacrohx.ai.Mode.IDLE) && scope.isActive) delay(300)
+                while ((assistant.micHeld || assistant.mode.value != com.irvin.dacrohx.ai.Mode.IDLE) && scope.isActive) delay(300)
 
                 val rec = Recognizer(model, rate.toFloat())
                 val min = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
@@ -290,7 +290,7 @@ class WakeWordService : Service() {
                 val buf = ByteArray(4096)
                 var woke = false
                 val fast = assistant.store.settings.value.fastVoice
-                while (scope.isActive && !assistant.micBusy && assistant.mode.value == com.irvin.dacrohx.ai.Mode.IDLE) {
+                while (scope.isActive && !assistant.micHeld && assistant.mode.value == com.irvin.dacrohx.ai.Mode.IDLE) {
                     val n = ar.read(buf, 0, buf.size)
                     if (n <= 0) continue
                     val final = rec.acceptWaveForm(buf, n)

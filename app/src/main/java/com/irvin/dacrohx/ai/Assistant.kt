@@ -58,6 +58,12 @@ class Assistant private constructor(private val app: Application) {
         return app as T
     }
 
+    /** Mientras dure una conversación por voz, "Oye Irvin" no debe tomar el micrófono (ni en los huecos). */
+    @Volatile var holdMicUntil = 0L
+    val micHeld: Boolean get() = micBusy || System.currentTimeMillis() < holdMicUntil
+    private fun holdMic(ms: Long = 20_000) { holdMicUntil = System.currentTimeMillis() + ms }
+    private fun releaseMic() { holdMicUntil = 0L }
+
     /** true mientras la app o la conversación por voz usan el micrófono. */
     @Volatile var micBusy = false
         private set
@@ -155,10 +161,11 @@ class Assistant private constructor(private val app: Application) {
                 android.content.pm.PackageManager.PERMISSION_GRANTED &&
                 (uiVisible || com.irvin.dacrohx.device.WakeWordService.running.value || com.irvin.dacrohx.device.BubbleService.running)
             if (!canListen || !SpeechRecognizer.isRecognitionAvailable(app)) return@launch
+            holdMic()
             playWake()
             _mode.value = Mode.LISTENING
             micBusy = true
-            val answer = try { listenOnce() } finally { micBusy = false; _mode.value = Mode.IDLE; _partialSpeech.value = "" }
+            val answer = try { listenOnce() } finally { micBusy = false; _mode.value = Mode.IDLE; _partialSpeech.value = ""; releaseMic() }
             if (answer.isNullOrBlank()) return@launch
             playEnd()
             answerAnnouncement(answer)
@@ -641,6 +648,7 @@ $rem
         val ctx = getApplication<Application>()
         val fast = store.settings.value.fastVoice && !fastVoiceBroken && SpeechRecognizer.isRecognitionAvailable(ctx)
         playWake()
+        holdMic()
         if (fast || !brain.audioEnabled) {
             micBusy = true
             startRecognizer()
@@ -707,9 +715,18 @@ $rem
                 if (noOffline && brain.audioEnabled) {
                     fastVoiceBroken = true
                     toast("El dictado rápido no está disponible sin internet. Ahora uso mi oído propio: toca el micrófono otra vez.")
+                } else if (voiceTurn && followMisses < 1) {
+                    // En plena conversación: vuelve a intentarlo una vez.
+                    followMisses++
+                    finishRecognizer(null)
+                    speaker.say("No te escuché, ¿me repites?", flush = true)
+                    voiceTurn = true
+                    followUpInApp("?")
+                    return
                 } else {
                     speaker.say("No te escuché, ¿me repites?", flush = true)
                     toast("No te escuché bien. Toca el micrófono y habla un poco más cerca.")
+                    endVoiceTurn()
                 }
                 finishRecognizer(null)
             }
@@ -749,7 +766,7 @@ $rem
         micBusy = false
         _partialSpeech.value = ""
         _mode.value = Mode.IDLE
-        if (!text.isNullOrBlank()) { voiceTurn = true; sendText(text) }
+        if (!text.isNullOrBlank()) { voiceTurn = true; followMisses = 0; holdMic(90_000); sendText(text) }
     }
 
     // ------------------------------------------------------------------ imagen
@@ -915,8 +932,9 @@ $rem
         // Modo conversación: si Irvin pregunta algo, vuelve a escuchar solo (hasta 4 veces seguidas).
         var turns = 0
         var misses = 0
-        while (turns < 5) {
+        try { while (turns < 5) {
             turns++
+            holdMic()
             playWake()
             _mode.value = Mode.LISTENING
             micBusy = true
@@ -930,15 +948,18 @@ $rem
             }
             playEnd()
             misses = 0
+            holdMic(90_000) // mientras piensa y responde
             val more = handsFreeText(text)
             if (!more) return
+            holdMic()
             kotlinx.coroutines.delay(450) // deja que se libere el audio antes de volver a escuchar
-        }
+        } } finally { releaseMic() }
     }
 
     /** Modo conversación en la app: tras una respuesta con pregunta, vuelve a abrir el micrófono. */
     private fun followUpInApp(reply: String) {
-        if (!voiceTurn || !expectsAnswer(reply)) { voiceTurn = false; return }
+        if (!voiceTurn || !expectsAnswer(reply)) { voiceTurn = false; followMisses = 0; releaseMic(); return }
+        holdMic()
         viewModelScope.launch {
             waitSpeech()
             kotlinx.coroutines.delay(450)
@@ -950,7 +971,8 @@ $rem
         }
     }
     @Volatile private var voiceTurn = false
-    fun endVoiceTurn() { voiceTurn = false }
+    private var followMisses = 0
+    fun endVoiceTurn() { voiceTurn = false; followMisses = 0; releaseMic() }
 
     /** Errores de "no pude abrir el micrófono / reconocedor ocupado": vale la pena reintentar. */
     private val retryable = setOf(SpeechRecognizer.ERROR_RECOGNIZER_BUSY, SpeechRecognizer.ERROR_CLIENT, 10, 11, SpeechRecognizer.ERROR_AUDIO)
