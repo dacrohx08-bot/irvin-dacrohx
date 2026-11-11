@@ -113,6 +113,81 @@ class Assistant private constructor(private val app: Application) {
         return "Reproduciendo '${hits.first().label}' en el reproductor de Irvin."
     }
 
+    // ---------------- aviso de mensajes con palabra secreta
+    @Volatile var uiVisible = false
+    @Volatile private var lastAnnounced: com.irvin.dacrohx.device.NotifListener.Item? = null
+    @Volatile private var lastAnnounceAt = 0L
+    private var lastAnnounceKey = ""
+    private var announceJob: Job? = null
+
+    private fun nrm(t: String) = java.text.Normalizer.normalize(t.lowercase(), java.text.Normalizer.Form.NFD)
+        .replace(Regex("\\p{M}"), "").replace(Regex("[^a-z0-9ñ ]"), " ").replace(Regex("\\s+"), " ").trim()
+
+    /** ¿La frase contiene la palabra secreta? (tolerante a acentos y mayúsculas) */
+    fun secretOk(said: String): Boolean {
+        val sec = nrm(store.settings.value.secretWord)
+        return sec.isEmpty() || nrm(said).contains(sec)
+    }
+    val hasSecret: Boolean get() = store.settings.value.secretWord.isNotBlank()
+
+    fun onIncomingMessage(item: com.irvin.dacrohx.device.NotifListener.Item) {
+        val st = store.settings.value
+        if (!st.announceMsgs) return
+        val am = app.getSystemService(android.media.AudioManager::class.java)
+        if (am.mode == android.media.AudioManager.MODE_IN_CALL || am.mode == android.media.AudioManager.MODE_IN_COMMUNICATION) return
+        // Evita repetir el aviso si la misma persona manda varios mensajes seguidos.
+        val key = item.pkg + "|" + item.title
+        val now = System.currentTimeMillis()
+        if (key == lastAnnounceKey && now - lastAnnounceAt < 45_000) { lastAnnounced = item; return }
+        if (genJob?.isActive == true || _mode.value == Mode.LISTENING || announceJob?.isActive == true) { lastAnnounced = item; return }
+        lastAnnounceKey = key; lastAnnounceAt = now; lastAnnounced = item
+        val who = if (st.discreetAnnounce) "" else " de ${item.title}"
+        val via = if (st.discreetAnnounce) "" else " por ${item.app}"
+        announceJob = viewModelScope.launch {
+            speaker.stop()
+            speaker.say("Tienes un mensaje nuevo$who$via. ¿Quieres que lo lea?", flush = true)
+            kotlinx.coroutines.delay(400)
+            speaker.speaking.first { !it }
+            val canListen = androidx.core.content.ContextCompat.checkSelfPermission(app, android.Manifest.permission.RECORD_AUDIO) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED &&
+                (uiVisible || com.irvin.dacrohx.device.WakeWordService.running.value || com.irvin.dacrohx.device.BubbleService.running)
+            if (!canListen || !SpeechRecognizer.isRecognitionAvailable(app)) return@launch
+            playWake()
+            _mode.value = Mode.LISTENING
+            micBusy = true
+            val answer = try { listenOnce() } finally { micBusy = false; _mode.value = Mode.IDLE; _partialSpeech.value = "" }
+            if (answer.isNullOrBlank()) return@launch
+            playEnd()
+            answerAnnouncement(answer)
+        }
+    }
+
+    /** Respuesta a "¿Quieres que lo lea?". Con palabra secreta, solo la palabra correcta lo lee. */
+    private fun answerAnnouncement(said: String): Boolean {
+        val item = lastAnnounced ?: return false
+        val x = nrm(said)
+        val no = Regex("^(no|nel|nop|ahorita no|luego|despues|al rato|ahora no)\\b").containsMatchIn(x)
+        if (no) { speaker.say("Ok.", flush = true); lastAnnounced = null; return true }
+        val yes = Regex("\\b(si|claro|dale|va|ok|leelo|lee|leemelo|adelante|simon|sale|por favor)\\b").containsMatchIn(x)
+        if (hasSecret) {
+            if (secretOk(said)) { readMessages(item); return true }
+            // Sin pistas: parece que simplemente no hizo nada.
+            if (yes) { speaker.say("De acuerdo.", flush = true); lastAnnounced = null; return true }
+            return false
+        }
+        if (yes) { readMessages(item); return true }
+        return false
+    }
+
+    private fun readMessages(item: com.irvin.dacrohx.device.NotifListener.Item) {
+        lastAnnounced = null
+        val all = com.irvin.dacrohx.device.NotifListener.recent(item.title, 5).filter { it.pkg == item.pkg }.reversed()
+        val texts = (if (all.isEmpty()) listOf(item) else all).joinToString(". ") { it.text.take(400) }
+        speaker.say("${item.title} dice: $texts", flush = true)
+        // Por privacidad no se guarda el contenido en el chat.
+        store.addChat(ChatMsg(role = "sys", text = if (hasSecret) "📩 Mensaje leído" else "📩 Leí el mensaje de ${item.title}"))
+    }
+
     /** Pide música respetando los favoritos (1 = directo, 2 = pregunta entre ellos). */
     fun requestMusic(query: String, appName: String): String {
         val all = music.musicApps()
@@ -299,6 +374,7 @@ Reglas:
 - Sé PRECISO y DIRECTO. Nunca pidas que el usuario "sea más específico" en preguntas simples: responde con la interpretación más lógica. Solo pregunta si de verdad falta un dato indispensable (por ejemplo, la hora de un recordatorio).
 - Para la hora o la fecha exactas usa SIEMPRE fecha_hora_actual; no la adivines.
 - Si algo requiere una acción, usa la herramienta. NUNCA digas que hiciste algo (poner música, guardar, programar, abrir) si no usaste la herramienta y esta no confirmó. Si no tienes herramienta para algo, dilo.
+- leer_notificaciones puede pedir una palabra clave: si responde CLAVE, pide al usuario "su palabra clave" (sin decir cuál es ni dar pistas) y vuelve a llamar con lo que diga. Nunca repitas la palabra clave.
 - Mensajes: enviar_sms y responder_mensaje solo PREPARAN; lee el mensaje y pregunta "¿Lo envío?". Solo si el usuario dice que sí → confirmar_accion. Si dice que no → cancelar_accion. Nunca digas "enviado" antes de confirmar_accion.
 - Si el usuario adjunta un DOCUMENTO, contesta usando su contenido.
 - Datos personales que valga la pena recordar → guardar_recuerdo. "Recuérdame…" → recordatorio_en_minutos/recordatorio_en_fecha. Música → reproducir_musica. Cuentas → calcular.
@@ -335,6 +411,10 @@ $rem
     /** Órdenes simples que no necesitan pensar: se ejecutan al instante. */
     private fun quickCommand(t: String): String? {
         val x = java.text.Normalizer.normalize(t.lowercase(), java.text.Normalizer.Form.NFD).replace(Regex("\\p{M}"), "").replace(Regex("[¿¡?!.,;:]"), " ").replace(Regex("\\s+"), " ").trim()
+        // Respuesta a "¿Quieres que lo lea?" (dentro de 2 minutos del aviso).
+        if (lastAnnounced != null && System.currentTimeMillis() - lastAnnounceAt < 120_000) {
+            if (answerAnnouncement(t)) return "\u200B"
+        }
         // Respuesta a "¿Poweramp o YouTube?": basta con decir el nombre.
         _musicChoice.value?.let { c ->
             val y = x.replace(Regex("^(en|con|el|la|pon(lo|la)? en|mejor en)\\s+"), "").trim()
@@ -404,6 +484,7 @@ $rem
         val doc = _pendingDoc.value
         if (img == null && doc == null && genJob?.isActive != true) {
             quickCommand(t)?.let { r ->
+                if (r == "\u200B") return
                 store.addChat(ChatMsg(role = "user", text = t))
                 store.addChat(ChatMsg(role = "model", text = r, actions = listOf("⚡ instantáneo")))
                 if (store.settings.value.autoSpeak) speaker.say(r, flush = true)
@@ -763,6 +844,7 @@ $rem
         }
         if (genJob?.isActive == true) return
         quickCommand(command)?.let { r ->
+            if (r == "\u200B") return
             store.addChat(ChatMsg(role = "user", text = "🎙️ $command"))
             store.addChat(ChatMsg(role = "model", text = r, actions = listOf("⚡ instantáneo")))
             speaker.say(r, flush = true)

@@ -38,8 +38,14 @@ class MainActivity : FragmentActivity() {
         handleIntent(intent)
     }
 
+    override fun onPause() {
+        super.onPause()
+        vm.uiVisible = false
+    }
+
     override fun onResume() {
         super.onResume()
+        vm.uiVisible = true
         startServicesIfEnabled()
         if (vm.locked.value) authenticate()
     }

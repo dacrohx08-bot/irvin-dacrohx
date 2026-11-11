@@ -19,11 +19,18 @@ class NotifListener : NotificationListenerService() {
 
     data class Item(
         val key: String, val pkg: String, val app: String, val title: String, val text: String,
-        val time: Long, val reply: Notification.Action?,
+        val time: Long, val reply: Notification.Action?, val isMessage: Boolean = false,
     )
 
     companion object {
         private val items = ArrayDeque<Item>()
+        val MESSAGING = setOf(
+            "com.whatsapp", "com.whatsapp.w4b", "org.telegram.messenger", "org.thunderdog.challegram",
+            "com.facebook.orca", "com.facebook.mlite", "com.instagram.android", "com.google.android.apps.messaging",
+            "com.samsung.android.messaging", "com.android.mms", "com.discord", "com.snapchat.android",
+            "com.microsoft.teams", "com.Slack", "com.viber.voip", "jp.naver.line.android", "com.signal",
+            "org.thoughtcrime.securesms",
+        )
         private val lock = Any()
         @Volatile var connected = false
             private set
@@ -74,8 +81,11 @@ class NotifListener : NotificationListenerService() {
         }
     }
 
+    private var connectedAt = 0L
+
     override fun onListenerConnected() {
         connected = true
+        connectedAt = System.currentTimeMillis()
         try { activeNotifications?.forEach { add(it) } } catch (_: Exception) {}
     }
 
@@ -97,10 +107,22 @@ class NotifListener : NotificationListenerService() {
             packageManager.getApplicationLabel(packageManager.getApplicationInfo(sbn.packageName, 0)).toString()
         } catch (_: Exception) { sbn.packageName }
         val reply = n.actions?.firstOrNull { a -> a.remoteInputs?.isNotEmpty() == true }
+        val isMsg = n.category == Notification.CATEGORY_MESSAGE || sbn.packageName in MESSAGING
+        val item = Item(sbn.key, sbn.packageName, app, title, text, sbn.postTime, reply, isMsg)
+        var isNew = false
         synchronized(lock) {
+            isNew = items.none { it.key == sbn.key && it.text == text }
             items.removeAll { it.key == sbn.key && it.text == text }
-            items.addLast(Item(sbn.key, sbn.packageName, app, title, text, sbn.postTime, reply))
+            items.addLast(item)
             while (items.size > 80) items.removeFirst()
+        }
+        // Aviso por voz de mensajes nuevos (solo los que llegan en este momento).
+        if (isNew && isMsg && System.currentTimeMillis() - sbn.postTime < 60_000 && connectedAt > 0 &&
+            System.currentTimeMillis() - connectedAt > 3000
+        ) {
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                try { com.irvin.dacrohx.ai.Assistant.get(this).onIncomingMessage(item) } catch (_: Exception) {}
+            }
         }
     }
 }

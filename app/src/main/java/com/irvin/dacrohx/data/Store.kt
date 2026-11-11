@@ -52,6 +52,9 @@ data class Settings(
     val cloudModel: String = "claude-sonnet-5-5",
     val musicApp: String = "", // favoritos separados por coma (máx. 2): paquetes de apps o "irvin"; "" = preguntar
     val wakeSound: String = "nucleo",
+    val announceMsgs: Boolean = false,
+    val secretWord: String = "",
+    val discreetAnnounce: Boolean = true,
 )
 
 val PERSONAS = listOf(
@@ -172,6 +175,9 @@ class Store private constructor(private val ctx: Context) {
             .putString("cloudModel", s.cloudModel)
             .putString("musicApp", s.musicApp)
             .putString("wakeSound", s.wakeSound)
+            .putBoolean("announceMsgs", s.announceMsgs)
+            .putString("secretWord", s.secretWord)
+            .putBoolean("discreetAnnounce", s.discreetAnnounce)
             .apply()
     }
 
@@ -193,6 +199,9 @@ class Store private constructor(private val ctx: Context) {
         cloudModel = prefs.getString("cloudModel", "claude-sonnet-5-5") ?: "claude-sonnet-5-5",
         musicApp = prefs.getString("musicApp", "") ?: "",
         wakeSound = prefs.getString("wakeSound", "nucleo") ?: "nucleo",
+        announceMsgs = prefs.getBoolean("announceMsgs", false),
+        secretWord = prefs.getString("secretWord", "") ?: "",
+        discreetAnnounce = prefs.getBoolean("discreetAnnounce", true),
     )
 
     // ---------------- persistencia JSON ----------------

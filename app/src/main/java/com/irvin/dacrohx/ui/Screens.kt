@@ -912,6 +912,9 @@ fun SettingsScreen(vm: Assistant, brain: BrainState) {
         Label("Velocidad")
         SpeedPanel(vm, s)
 
+        Label("Avisos de mensajes")
+        AnnouncePanel(vm)
+
         Label("Música")
         MusicDefaultPanel(vm)
 
@@ -984,6 +987,67 @@ fun SettingsScreen(vm: Assistant, brain: BrainState) {
     if (confirmClear) Confirm("¿Borrar toda la conversación? Tus recuerdos y recordatorios se quedan.", { confirmClear = false }) { vm.newChat() }
     if (confirmModel) Confirm("¿Borrar el modelo (3.7 GB)? Tendrás que descargarlo otra vez.", { confirmModel = false }) {
         vm.deleteModel()
+    }
+}
+
+@Composable
+private fun AnnouncePanel(vm: Assistant) {
+    val ctx = LocalContext.current
+    val st by vm.store.settings.collectAsState()
+    var show by remember { mutableStateOf(false) }
+    var secret by remember { mutableStateOf(st.secretWord) }
+    val notifOk = com.irvin.dacrohx.device.NotifListener.enabled(ctx)
+    Panel {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Avisarme cuando llegue un mensaje", color = C.Txt, fontSize = 16.sp)
+                Text("Irvin dice “Tienes un mensaje nuevo, ¿quieres que lo lea?” y escucha tu respuesta.", color = C.Mut, fontSize = 13.sp)
+            }
+            Switch(st.announceMsgs, { v ->
+                if (v && !notifOk) { com.irvin.dacrohx.device.NotifListener.openSettings(ctx); vm.toast("Primero permite que Irvin lea notificaciones.") }
+                vm.store.updateSettings { it.copy(announceMsgs = v) }
+            }, colors = SwitchDefaults.colors(checkedTrackColor = C.Red))
+        }
+        Spacer(Modifier.height(10.dp))
+        Text("🔐 Palabra secreta", color = C.Txt, fontSize = 16.sp)
+        Text(
+            "Solo leeré tus mensajes si dices esta palabra. Si alguien más dice “sí”, contesto “De acuerdo” y no leo nada, sin dar pistas. Déjala vacía para que baste con decir “sí”.",
+            color = C.Mut, fontSize = 13.sp,
+        )
+        Spacer(Modifier.height(6.dp))
+        OutlinedTextField(
+            value = secret, onValueChange = { secret = it.take(40) },
+            label = { Text("Palabra o frase secreta") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+            visualTransformation = if (show) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+            trailingIcon = { TextButton(onClick = { show = !show }) { Text(if (show) "Ocultar" else "Ver", color = C.Mut) } },
+            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = C.Red, unfocusedBorderColor = C.Line, focusedContainerColor = C.Bg2, unfocusedContainerColor = C.Bg2),
+        )
+        Row(Modifier.padding(top = 6.dp)) {
+            Button(onClick = {
+                vm.store.updateSettings { it.copy(secretWord = secret.trim()) }
+                vm.toast(if (secret.isBlank()) "Sin palabra secreta." else "Palabra secreta guardada 🤫")
+            }, colors = ButtonDefaults.buttonColors(containerColor = C.Red)) { Text("Guardar") }
+            Spacer(Modifier.width(8.dp))
+            if (st.secretWord.isNotBlank()) OutlinedButton(onClick = {
+                secret = ""; vm.store.updateSettings { it.copy(secretWord = "") }; vm.toast("Palabra secreta eliminada.")
+            }) { Text("Quitar", color = C.Red2) }
+        }
+        Text(
+            if (st.secretWord.isNotBlank()) "● Protegido" else "○ Sin palabra secreta",
+            color = if (st.secretWord.isNotBlank()) C.Ok else C.Mut, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp),
+        )
+        Spacer(Modifier.height(10.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Aviso discreto", color = C.Txt, fontSize = 16.sp)
+                Text("No decir de quién es ni de qué app, solo “Tienes un mensaje nuevo”.", color = C.Mut, fontSize = 13.sp)
+            }
+            Switch(st.discreetAnnounce, { v -> vm.store.updateSettings { it.copy(discreetAnnounce = v) } }, colors = SwitchDefaults.colors(checkedTrackColor = C.Red))
+        }
+        Text(
+            "Para responder con la pantalla apagada, deja activo “Oye Irvin”. También puedes decir después “Oye Irvin” + tu palabra secreta.",
+            color = C.Mut, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp),
+        )
     }
 }
 

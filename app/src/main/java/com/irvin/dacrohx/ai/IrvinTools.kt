@@ -281,9 +281,13 @@ class IrvinTools(
         return phone.whatsapp(c.number, mensaje)
     }
 
-    @Tool(description = "Lee las notificaciones y mensajes recientes (WhatsApp, Telegram, SMS, correo...).")
-    fun leerNotificaciones(@ToolParam(description = "App o persona para filtrar, o 'todas'.") filtro: String): String {
+    @Tool(description = "Lee las notificaciones y mensajes recientes (WhatsApp, Telegram, SMS, correo...). Si el usuario tiene palabra clave, pásala en 'clave'.")
+    fun leerNotificaciones(
+        @ToolParam(description = "App o persona para filtrar, o 'todas'.") filtro: String,
+        @ToolParam(description = "Palabra clave que dijo el usuario, o vacío.") clave: String,
+    ): String {
         if (!com.irvin.dacrohx.device.NotifListener.enabled(ctx)) return "No tengo acceso a las notificaciones. Dile que lo active en Ajustes → Permisos → Notificaciones."
+        if (host.hasSecret && !host.secretOk(clave)) return "CLAVE: los mensajes están protegidos. Pide al usuario su palabra clave (no la digas ni des pistas)."
         onAction("🔔 Notificaciones")
         return com.irvin.dacrohx.device.NotifListener.format(com.irvin.dacrohx.device.NotifListener.recent(filtro))
     }

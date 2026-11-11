@@ -27,7 +27,7 @@ object Backup {
         }
         val prefs = ctx.getSharedPreferences("irvin", Context.MODE_PRIVATE).all
         val p = JSONObject()
-        prefs.forEach { (k, v) -> if (k != "cloudKey") p.put(k, v) } // la clave de la nube no se exporta
+        prefs.forEach { (k, v) -> if (k != "cloudKey" && k != "secretWord") p.put(k, v) } // claves privadas no se exportan
         root.put("settings", p)
         ctx.contentResolver.openOutputStream(uri)!!.use { it.write(root.toString(2).toByteArray()) }
         val m = root.getJSONArray("memories").length()
