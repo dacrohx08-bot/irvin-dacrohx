@@ -338,7 +338,7 @@ $rem
     /** Respaldo: reconocimiento de voz de Android en modo offline. */
     private fun startRecognizer() {
         val ctx = getApplication<Application>()
-        if (!SpeechRecognizer.isRecognitionAvailable(ctx)) { toast("No hay reconocimiento de voz disponible."); return }
+        if (!SpeechRecognizer.isRecognitionAvailable(ctx)) { micBusy = false; toast("No hay reconocimiento de voz disponible."); return }
         // En Android 12+ usa el reconocedor que corre en el teléfono (sin internet, más rápido).
         val sr = if (SpeechRecognizer.isOnDeviceRecognitionAvailable(ctx))
             SpeechRecognizer.createOnDeviceSpeechRecognizer(ctx)
