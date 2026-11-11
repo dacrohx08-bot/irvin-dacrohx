@@ -168,7 +168,11 @@ class MusicPlayer(private val ctx: Context) {
                 out[pkg] = App(pkg, it.loadLabel(pm).toString())
             }
         } catch (_: Exception) {}
-        for ((pkg, name) in listOf("com.maxmpz.audioplayer" to "Poweramp", "com.spotify.music" to "Spotify", "com.google.android.apps.youtube.music" to "YouTube Music")) {
+        out.remove("com.google.android.youtube")
+        for ((pkg, name) in listOf(
+            "com.maxmpz.audioplayer" to "Poweramp", "com.spotify.music" to "Spotify",
+            "com.google.android.apps.youtube.music" to "YouTube Music", "com.google.android.youtube" to "YouTube",
+        )) {
             if (pkg !in out) try { pm.getPackageInfo(pkg, 0); out[pkg] = App(pkg, name) } catch (_: Exception) {}
         }
         return out.values.toList()
@@ -177,12 +181,25 @@ class MusicPlayer(private val ctx: Context) {
     fun findApp(name: String): App? {
         val n = norm(name)
         if (n.isEmpty()) return null
-        return musicApps().firstOrNull { norm(it.label).contains(n) || n.contains(norm(it.label)) }
+        val apps = musicApps()
+        return apps.firstOrNull { norm(it.label) == n }
+            ?: apps.sortedByDescending { it.label.length }.firstOrNull { n.contains(norm(it.label)) }
+            ?: apps.firstOrNull { norm(it.label).contains(n) }
     }
 
     /** Reproduce en otra app. Primero por búsqueda; si no, abre la canción encontrada en el teléfono. */
     fun playInApp(app: App, query: String): Boolean {
         val pm = ctx.packageManager
+        // YouTube (normal / Premium): abre la búsqueda del video musical.
+        if (app.pkg == "com.google.android.youtube") {
+            val q = if (query.isBlank() || norm(query) in setOf("lo que sea", "la que sea", "musica")) "música" else query
+            val i = Intent(Intent.ACTION_SEARCH).setPackage(app.pkg).putExtra("query", q).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            try { stop(); ctx.startActivity(i); return true } catch (_: Exception) {}
+            try {
+                ctx.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.youtube.com/results?search_query=" + android.net.Uri.encode(q)))
+                    .setPackage(app.pkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); return true
+            } catch (_: Exception) {}
+        }
         val hits = if (query.isNotBlank()) search(query) else emptyList()
         val isArtist = hits.isNotEmpty() && norm(hits.first().artist).contains(norm(query))
         val i = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)

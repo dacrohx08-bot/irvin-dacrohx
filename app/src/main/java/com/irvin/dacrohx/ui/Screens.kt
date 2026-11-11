@@ -466,7 +466,7 @@ fun ChatScreen(vm: Assistant, mode: Mode, brain: BrainState) {
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { remember = !remember }) {
                     androidx.compose.material3.Checkbox(remember, { remember = it })
-                    Text("Recordar mi elección", color = C.Mut, fontSize = 13.sp)
+                    Text("Usar siempre (predeterminado)", color = C.Mut, fontSize = 13.sp)
                 }
             }
         }
@@ -863,15 +863,7 @@ private fun MusicPanel(vm: Assistant) {
             RoundIcon(Icons.Filled.Stop, "Detener", bg = C.Panel2) { vm.music.stop() }
         }
         Spacer(Modifier.height(6.dp))
-        val st by vm.store.settings.collectAsState()
-        val apps = remember { vm.music.musicApps() }
-        Text("Cuando pidas música:", color = C.Mut, fontSize = 13.sp)
-        @OptIn(ExperimentalLayoutApi::class)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 6.dp)) {
-            Chip("Preguntar", selected = st.musicApp.isEmpty()) { vm.store.updateSettings { it.copy(musicApp = "") } }
-            apps.forEach { a -> Chip(a.label, selected = st.musicApp == a.pkg) { vm.store.updateSettings { it.copy(musicApp = a.pkg) } } }
-            Chip("Irvin", selected = st.musicApp == "irvin") { vm.store.updateSettings { it.copy(musicApp = "irvin") } }
-        }
+        Text("Reproductor predeterminado: Ajustes → Música.", color = C.Mut, fontSize = 12.sp, modifier = Modifier.padding(bottom = 6.dp))
         Text("Volumen ${vol.toInt()}%", color = C.Mut, fontSize = 13.sp)
         Slider(value = vol, onValueChange = { vol = it; vm.music.setVolume(it.toInt()) }, valueRange = 0f..100f)
     }
@@ -916,6 +908,9 @@ fun SettingsScreen(vm: Assistant, brain: BrainState) {
 
         Label("Velocidad")
         SpeedPanel(vm, s)
+
+        Label("Música")
+        MusicDefaultPanel(vm)
 
         Label("Permisos y accesos")
         PermissionsPanel(vm)
@@ -986,6 +981,46 @@ fun SettingsScreen(vm: Assistant, brain: BrainState) {
     if (confirmClear) Confirm("¿Borrar toda la conversación? Tus recuerdos y recordatorios se quedan.", { confirmClear = false }) { vm.newChat() }
     if (confirmModel) Confirm("¿Borrar el modelo (3.7 GB)? Tendrás que descargarlo otra vez.", { confirmModel = false }) {
         vm.deleteModel()
+    }
+}
+
+@Composable
+private fun MusicDefaultPanel(vm: Assistant) {
+    val st by vm.store.settings.collectAsState()
+    val apps = remember { vm.music.musicApps() }
+    val current = when (st.musicApp) {
+        "" -> null
+        "irvin" -> "Reproductor de Irvin"
+        else -> apps.firstOrNull { it.pkg == st.musicApp }?.label ?: "App desinstalada"
+    }
+    Panel {
+        Text("Reproductor predeterminado", color = C.Txt, fontSize = 16.sp)
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+            Text(
+                current?.let { "🎵 $it" } ?: "Ninguno: Irvin te pregunta cada vez",
+                color = if (current != null) C.Ok else C.Mut, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+            )
+            if (current != null) OutlinedButton(onClick = {
+                vm.store.updateSettings { it.copy(musicApp = "") }
+                vm.toast("Predeterminado eliminado. Irvin preguntará en qué app poner la música.")
+            }) { Text("Quitar", color = C.Red2) }
+        }
+        Spacer(Modifier.height(10.dp))
+        Text("Elegir otro:", color = C.Mut, fontSize = 13.sp)
+        @OptIn(ExperimentalLayoutApi::class)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 6.dp)) {
+            apps.forEach { a ->
+                Chip(a.label, selected = st.musicApp == a.pkg) {
+                    vm.store.updateSettings { it.copy(musicApp = a.pkg) }; vm.toast("${a.label} es tu reproductor predeterminado.")
+                }
+            }
+            Chip("Reproductor de Irvin", selected = st.musicApp == "irvin") {
+                vm.store.updateSettings { it.copy(musicApp = "irvin") }; vm.toast("Usaré el reproductor de Irvin.")
+            }
+        }
+        if (apps.isEmpty()) Text("No encontré apps de música compatibles instaladas.", color = C.Warn, fontSize = 12.sp)
+        Text("También por voz: “pon Poweramp como predeterminado” o “quita mi reproductor predeterminado”.", color = C.Mut, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
     }
 }
 

@@ -172,6 +172,23 @@ class IrvinTools(
         return host.playMusic(busqueda, target).also { onAction("🎵 " + (target?.label ?: "Irvin")) }
     }
 
+    @Tool(description = "Elige o quita el reproductor de música predeterminado del usuario (Poweramp, YouTube, YouTube Music, Spotify, Irvin). Usa 'quitar' para que vuelva a preguntar.")
+    fun reproductorPredeterminado(
+        @ToolParam(description = "Nombre de la app, 'Irvin' o 'quitar'.") app: String,
+    ): String {
+        val a = app.lowercase()
+        if ("quit" in a || "borr" in a || "elimin" in a || "ningun" in a || "pregunt" in a) {
+            store.updateSettings { it.copy(musicApp = "") }
+            onAction("🎵 Sin predeterminado")
+            return "Listo, ya no hay reproductor predeterminado; preguntaré cada vez."
+        }
+        if ("irvin" in a) { store.updateSettings { it.copy(musicApp = "irvin") }; onAction("🎵 Irvin"); return "Predeterminado: reproductor de Irvin." }
+        val found = music.findApp(app) ?: return "No encontré '$app' instalado. Opciones: " + music.musicApps().joinToString { it.label }
+        store.updateSettings { it.copy(musicApp = found.pkg) }
+        onAction("🎵 ${found.label}")
+        return "Listo: ${found.label} es tu reproductor predeterminado."
+    }
+
     @Tool(description = "Controla la música que está sonando (de Irvin o de cualquier app). Acciones: pausar, reanudar, siguiente, anterior, detener.")
     fun controlarMusica(
         @ToolParam(description = "pausar, reanudar, siguiente, anterior o detener") accion: String,
