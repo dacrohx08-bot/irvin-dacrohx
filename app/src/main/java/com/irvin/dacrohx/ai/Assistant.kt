@@ -404,8 +404,8 @@ $rem
         if (!brain.ready) return@launch
         val history = if (!keepHistory) emptyList() else store.chat.value
             .filter { !it.pending && !it.error && (it.role == "user" || it.role == "model") && it.text.isNotBlank() }
-            .takeLast(12)
-            .map { it.role to it.text }
+            .takeLast(8)
+            .map { it.role to it.text.take(800) }
             .dropWhile { it.first != "user" }
         try {
             brain.newConversation(systemPrompt(), history, tools())
@@ -561,7 +561,8 @@ $rem
             var lastUi = 0L
             var failed: String? = null
             // Si la memoria de trabajo va muy llena, empieza una conversación fresca (recordando lo último).
-            if (brain.tokenCount() > brain.maxTokens * 0.6) compactConversation()
+            val usedBefore = brain.tokenCount()
+            if (usedBefore > brain.maxTokens * 0.8) compactConversation()
             suspend fun attempt() {
                 try {
                     brain.send(parts)
@@ -599,7 +600,8 @@ $rem
             }
             val finalText = cleanReply(sb.toString()).trim()
             val total = System.currentTimeMillis() - t0
-            val speed = "⚡ %.1f s · %.1f s".format(tFirst / 1000.0, total / 1000.0)
+            val used = brain.tokenCount()
+            val speed = "⚡ %.1f s · %.1f s · 🧠 %.1fk".format(tFirst / 1000.0, total / 1000.0, used / 1000.0)
             store.updateChat(reply.id, persist = true) { m0 ->
                 val it = if (failed == null) m0.copy(actions = m0.actions + speed) else m0
                 when {

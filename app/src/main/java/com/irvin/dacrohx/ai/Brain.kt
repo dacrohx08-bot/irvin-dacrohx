@@ -76,7 +76,7 @@ class Brain(private val ctx: Context) {
                     backend = a.backend(),
                     visionBackend = if (a.multimodal) Backend.GPU() else null,
                     audioBackend = if (a.multimodal) Backend.CPU() else null,
-                    maxNumTokens = 8192,
+                    maxNumTokens = 16384,
                     cacheDir = ctx.cacheDir.absolutePath,
                 )
                 val e = Engine(cfg)
@@ -136,7 +136,7 @@ class Brain(private val ctx: Context) {
         try { conversation?.getTokenCount() ?: 0 } catch (_: Throwable) { 0 }
     }
 
-    val maxTokens = 8192
+    val maxTokens = 16384
 
     fun stop() {
         try { conversation?.cancelProcess() } catch (_: Throwable) {}
