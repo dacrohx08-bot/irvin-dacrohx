@@ -1,0 +1,54 @@
+name: Compilar APK de Irvin Dacrohx
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.2.1"
+
+      - name: Compilar
+        run: |
+          set -o pipefail
+          gradle --no-daemon --stacktrace assembleRelease 2>&1 | tee build.log
+
+      - name: Revisar resultado
+        run: |
+          ls app/build/outputs/apk/release/
+          cp app/build/outputs/apk/release/app-release.apk IrvinDacrohx.apk
+
+      - name: Guardar log si falla
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+
+      - name: Publicar APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: Irvin Dacrohx v1.0.${{ github.run_number }}
+          body: |
+            Descarga **IrvinDacrohx.apk** desde tu teléfono e instálalo.
+            La primera vez la app descarga el cerebro (3.7 GB); después funciona sin internet.
+          files: IrvinDacrohx.apk
+          make_latest: true

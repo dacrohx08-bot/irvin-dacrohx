@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_mic"
+        android:shortcutId="voz"
+        android:shortcutLongLabel="@string/shortcut_voice_long"
+        android:shortcutShortLabel="@string/shortcut_voice">
+        <intent
+            android:action="com.irvin.dacrohx.VOZ"
+            android:targetClass="com.irvin.dacrohx.MainActivity"
+            android:targetPackage="com.irvin.dacrohx" />
+    </shortcut>
+</shortcuts>

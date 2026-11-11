@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Núcleo de Irvin Dacrohx: anillos rojos con las iniciales ID -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- anillo exterior partido -->
+    <path
+        android:strokeColor="#FF2340"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M54,24 A30,30 0 0,1 84,54" />
+    <path
+        android:strokeColor="#FF2340"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M54,84 A30,30 0 0,1 24,54" />
+    <!-- anillo interior -->
+    <path
+        android:strokeColor="#FF5468"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M76,54 A22,22 0 0,1 54,76" />
+    <path
+        android:strokeColor="#FF5468"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M32,54 A22,22 0 0,1 54,32" />
+    <!-- núcleo -->
+    <path
+        android:fillColor="#FF2340"
+        android:pathData="M54,40 A14,14 0 1,1 53.99,40 Z" />
+    <!-- I -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M45,47 h3 v14 h-3 z" />
+    <!-- D -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M51,47 h4 a7,7 0 0,1 0,14 h-4 z M54,50 v8 h1 a4,4 0 0,0 0,-8 z" />
+</vector>

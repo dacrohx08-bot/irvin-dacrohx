@@ -1,0 +1,189 @@
+package com.irvin.dacrohx.device
+
+import android.annotation.SuppressLint
+import android.content.Context
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import java.io.ByteArrayOutputStream
+import java.util.Locale
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.sqrt
+
+/** Graba la voz a 16 kHz mono para que Gemma la entienda directamente (sin internet). */
+class VoiceRecorder {
+    companion object {
+        const val SAMPLE_RATE = 16000
+        const val MAX_SECONDS = 30
+    }
+
+    private var record: AudioRecord? = null
+    private var thread: Thread? = null
+    private val pcm = ByteArrayOutputStream()
+    @Volatile private var running = false
+
+    private val _level = MutableStateFlow(0f)
+    val level: StateFlow<Float> = _level.asStateFlow()
+
+    var onAutoStop: (() -> Unit)? = null
+
+    val isRecording: Boolean get() = running
+
+    @SuppressLint("MissingPermission")
+    fun start(): Boolean {
+        if (running) return true
+        val min = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        val rec = try {
+            AudioRecord(
+                MediaRecorder.AudioSource.VOICE_RECOGNITION, SAMPLE_RATE,
+                AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(min, 4096) * 2
+            )
+        } catch (e: Exception) { return false }
+        if (rec.state != AudioRecord.STATE_INITIALIZED) { rec.release(); return false }
+        record = rec
+        synchronized(pcm) { pcm.reset() }
+        running = true
+        rec.startRecording()
+        thread = Thread {
+            val buf = ByteArray(3200) // 100 ms
+            val maxBytes = SAMPLE_RATE * 2 * MAX_SECONDS
+            while (running) {
+                val n = rec.read(buf, 0, buf.size)
+                if (n > 0) {
+                    synchronized(pcm) { pcm.write(buf, 0, n) }
+                    var sum = 0.0
+                    var i = 0
+                    while (i + 1 < n) {
+                        val s = ((buf[i + 1].toInt() shl 8) or (buf[i].toInt() and 0xff)).toShort().toDouble()
+                        sum += s * s
+                        i += 2
+                    }
+                    val rms = sqrt(sum / (n / 2).coerceAtLeast(1))
+                    _level.value = (rms / 6000.0).toFloat().coerceIn(0f, 1f)
+                    if (pcm.size() >= maxBytes) {
+                        running = false
+                        onAutoStop?.invoke()
+                    }
+                }
+            }
+        }.apply { name = "irvin-mic"; start() }
+        return true
+    }
+
+    /** Detiene y devuelve el audio como WAV (o null si fue demasiado corto). */
+    fun stop(): ByteArray? {
+        running = false
+        try { thread?.join(500) } catch (_: Exception) {}
+        try { record?.stop() } catch (_: Exception) {}
+        record?.release()
+        record = null
+        _level.value = 0f
+        val data = synchronized(pcm) { pcm.toByteArray() }
+        if (data.size < SAMPLE_RATE * 2 / 2) return null // menos de medio segundo
+        return wav(data)
+    }
+
+    fun cancel() { stop() }
+
+    private fun wav(pcmData: ByteArray): ByteArray {
+        val out = ByteArrayOutputStream(pcmData.size + 44)
+        fun i32(v: Int) { out.write(v and 0xff); out.write(v shr 8 and 0xff); out.write(v shr 16 and 0xff); out.write(v shr 24 and 0xff) }
+        fun i16(v: Int) { out.write(v and 0xff); out.write(v shr 8 and 0xff) }
+        out.write("RIFF".toByteArray()); i32(36 + pcmData.size); out.write("WAVE".toByteArray())
+        out.write("fmt ".toByteArray()); i32(16); i16(1); i16(1); i32(SAMPLE_RATE); i32(SAMPLE_RATE * 2); i16(2); i16(16)
+        out.write("data".toByteArray()); i32(pcmData.size); out.write(pcmData)
+        return out.toByteArray()
+    }
+}
+
+/** Voz de Irvin con el motor de Android (funciona offline con la voz en español descargada). */
+class Speaker(ctx: Context) {
+    private var ready = false
+    private val pending = AtomicInteger(0)
+    private val _speaking = MutableStateFlow(false)
+    val speaking: StateFlow<Boolean> = _speaking.asStateFlow()
+    private var buffer = StringBuilder()
+    var rate = 1.05f
+
+    private lateinit var tts: TextToSpeech
+
+    init {
+        tts = TextToSpeech(ctx.applicationContext) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                ready = true
+                val mx = tts.setLanguage(Locale("es", "MX"))
+                if (mx == TextToSpeech.LANG_MISSING_DATA || mx == TextToSpeech.LANG_NOT_SUPPORTED) {
+                    tts.setLanguage(Locale("es"))
+                }
+            }
+        }
+        tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            override fun onStart(utteranceId: String?) { _speaking.value = true }
+            override fun onDone(utteranceId: String?) {
+                if (pending.decrementAndGet() <= 0) { pending.set(0); _speaking.value = false }
+            }
+            @Deprecated("Deprecated in Java")
+            override fun onError(utteranceId: String?) { onDone(utteranceId) }
+            override fun onStop(utteranceId: String?, interrupted: Boolean) {
+                pending.set(0); _speaking.value = false
+            }
+        })
+    }
+
+    private fun clean(s: String) = s
+        .replace(Regex("[*_`#>|]"), "")
+        .replace(Regex("\\[([^\\]]+)\\]\\([^)]+\\)"), "$1")
+        .let { str ->
+            val sb = StringBuilder()
+            var i = 0
+            while (i < str.length) {
+                val cp = str.codePointAt(i)
+                val type = Character.getType(cp)
+                if (cp < 0x2600 || (type != Character.OTHER_SYMBOL.toInt() && cp < 0x1F000)) sb.appendCodePoint(cp)
+                i += Character.charCount(cp)
+            }
+            sb.toString()
+        }
+        .trim()
+
+    fun say(text: String, flush: Boolean = false) {
+        if (!ready) return
+        val t = clean(text)
+        if (t.isEmpty()) return
+        tts.setSpeechRate(rate)
+        pending.incrementAndGet()
+        tts.speak(t, if (flush) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD, null, "u" + System.nanoTime())
+    }
+
+    /** Habla por frases mientras el modelo sigue escribiendo (respuesta más rápida). */
+    fun feed(delta: String) {
+        buffer.append(delta)
+        while (true) {
+            val idx = buffer.indexOfFirst { it == '.' || it == '!' || it == '?' || it == '\n' || it == ':' || it == ';' }
+            if (idx < 0) break
+            val sentence = buffer.substring(0, idx + 1)
+            buffer.delete(0, idx + 1)
+            if (sentence.isNotBlank()) say(sentence)
+        }
+        if (buffer.length > 220) { say(buffer.toString()); buffer.clear() }
+    }
+
+    fun finish() {
+        if (buffer.isNotBlank()) say(buffer.toString())
+        buffer.clear()
+    }
+
+    fun stop() {
+        buffer.clear()
+        pending.set(0)
+        if (ready) tts.stop()
+        _speaking.value = false
+    }
+
+    fun shutdown() { tts.shutdown() }
+}

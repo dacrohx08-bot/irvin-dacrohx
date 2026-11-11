@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Irvin" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/irvin_bg</item>
+        <item name="android:statusBarColor">@color/irvin_bg</item>
+        <item name="android:navigationBarColor">@color/irvin_bg</item>
+        <item name="android:colorAccent">@color/irvin_red</item>
+    </style>
+    <color name="irvin_bg">#FF060608</color>
+    <color name="irvin_red">#FFFF2340</color>
+</resources>
