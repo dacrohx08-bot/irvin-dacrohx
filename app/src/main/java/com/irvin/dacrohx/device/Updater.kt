@@ -82,7 +82,7 @@ class Updater(private val ctx: Context) {
                 val a = assets.getJSONObject(i)
                 if (a.optString("name").endsWith(".apk")) {
                     return Release(
-                        code, tag, j.optString("body").take(1200),
+                        code, tag, j.optString("body").substringBefore("Co-Authored-By").trim().take(1200),
                         a.getString("browser_download_url"), a.optLong("size"),
                     )
                 }
