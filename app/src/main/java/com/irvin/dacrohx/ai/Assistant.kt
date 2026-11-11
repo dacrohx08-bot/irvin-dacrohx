@@ -232,6 +232,9 @@ class Assistant private constructor(private val app: Application) {
         }
     }
 
+    /** Último pedido de música (para cumplirlo si el cerebro dice "reproduciendo" sin hacerlo). */
+    @Volatile private var lastMusic: Triple<String, String, Long>? = null
+
     /** Detecta "pon música de X en Y" y devuelve (búsqueda, app) o null. */
     private fun parseMusic(x: String): Pair<String, String>? {
         val m = Regex("^(pon|ponme|ponle|reproduce|reproducir|toca|tocame|quiero (escuchar|oir)|escuchar|pones)\\s+(.*)$").find(x) ?: return null
@@ -492,8 +495,9 @@ $rem
             val sentences = (listOf(x) + raw.split(Regex("[.?!;¿¡]+"))).map { it.replace(Regex("[,:]"), " ").replace(Regex("\\s+"), " ").trim() }.filter { it.isNotEmpty() }
             for (sen in sentences) {
                 val fixed = sen.replace(Regex("^(oye irvin |irvin |oye )?"), "")
-                    .replace(Regex("^(por|pom|bon|pong|ponga|pongan|pones|pone|ton|com)\\b"), "pon")
+                    .replace(Regex("^(por|pom|bon|pong|ponga|pongan|pones|pone|ton|com|un|on|pan|pun|son|don)\\b"), "pon")
                 parseMusic(fixed)?.let { (q, app) ->
+                    lastMusic = Triple(q, app, System.currentTimeMillis())
                     val r = requestMusic(q, app)
                     return if (r.startsWith("PREGUNTA:")) r.removePrefix("PREGUNTA: ") else r
                 }
@@ -681,7 +685,17 @@ $rem
                 compactConversation()
                 attempt()
             }
-            val finalText = cleanReply(sb.toString()).trim()
+            var finalText = cleanReply(sb.toString()).trim()
+            // El cerebro a veces dice "Reproduciendo…" sin usar la herramienta: lo hacemos de verdad.
+            val usedTool = store.chat.value.firstOrNull { it.id == reply.id }?.actions?.isNotEmpty() == true
+            if (failed == null && !usedTool && Regex("(?i)^(listo[,.]? )?(reproduciendo|poniendo|pongo|abriendo|te pongo|ya (puse|está sonando))").containsMatchIn(finalText)) {
+                val lm = lastMusic?.takeIf { System.currentTimeMillis() - it.third < 5 * 60_000 }
+                val fixed = if (lm != null) requestMusic(lm.first, lm.second).let { if (it.startsWith("PREGUNTA:")) it.removePrefix("PREGUNTA: ") else it }
+                else "Perdón, no la puse. Dime por ejemplo: pon Quintana en YouTube."
+                com.irvin.dacrohx.device.VoiceLog.add("El cerebro dijo que puso música sin hacerlo → $fixed")
+                finalText = fixed
+                if (autoSpeak) speaker.say(fixed, flush = true)
+            }
             val total = System.currentTimeMillis() - t0
             val used = brain.tokenCount()
             val speed = "⚡ %.1f s · %.1f s · 🧠 %.1fk".format(tFirst / 1000.0, total / 1000.0, used / 1000.0)

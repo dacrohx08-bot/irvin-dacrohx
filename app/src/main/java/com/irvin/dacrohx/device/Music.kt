@@ -211,7 +211,7 @@ class MusicPlayer(private val ctx: Context) {
     fun playInApp(app: App, query: String): Boolean {
         val pm = ctx.packageManager
         // YouTube (normal / Premium): busca el video y lo REPRODUCE directo, con un mix de canciones parecidas.
-        if (app.pkg == "com.google.android.youtube") {
+        if (isYouTube(app)) {
             val generic = query.isBlank() || norm(query) in setOf("lo que sea", "la que sea", "musica", "algo", "cualquier cosa")
             val q = if (generic) "música mix" else query
             stop()
@@ -227,7 +227,7 @@ class MusicPlayer(private val ctx: Context) {
             return true
         }
         // YouTube Music: también directo a la canción si hay internet.
-        if (app.pkg == "com.google.android.apps.youtube.music" && query.isNotBlank() && norm(query) !in setOf("lo que sea", "la que sea", "musica")) {
+        if (isYouTubeMusic(app) && query.isNotBlank() && norm(query) !in setOf("lo que sea", "la que sea", "musica")) {
             stop()
             Thread {
                 val id = try { youtubeVideoId(query) } catch (_: Exception) { null }
@@ -268,6 +268,16 @@ class MusicPlayer(private val ctx: Context) {
             try { ctx.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); return true } catch (_: Exception) {}
         }
         return false
+    }
+
+    /** YouTube normal, Premium o versiones modificadas (otro nombre de paquete). */
+    fun isYouTube(app: App): Boolean {
+        val l = norm(app.label); val p = app.pkg.lowercase()
+        return !isYouTubeMusic(app) && ("youtube" in l || "youtube" in p || "vanced" in p || "revanced" in p)
+    }
+    fun isYouTubeMusic(app: App): Boolean {
+        val l = norm(app.label); val p = app.pkg.lowercase()
+        return ("youtube" in l && "music" in l) || "youtube.music" in p || ("music" in p && "vanced" in p)
     }
 
     /** Primer video (no anuncio) de la búsqueda en YouTube. Necesita internet; si no, null. */
