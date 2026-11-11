@@ -119,6 +119,9 @@ class Brain(private val ctx: Context) {
                 samplerConfig = SamplerConfig(topK = 40, topP = 0.9, temperature = 0.55),
                 // Procesa las instrucciones al crear la conversación: el primer mensaje responde más rápido.
                 prefillPrefaceOnInit = true,
+                // Sin "modo pensar": responde directo (mucho más rápido).
+                thinkingConfig = com.google.ai.edge.litertlm.ThinkingConfig(enableThinking = false, thinkingTokenBudget = 0),
+                extraContext = mapOf("enable_thinking" to false),
             )
         )
     }
@@ -126,7 +129,7 @@ class Brain(private val ctx: Context) {
     /** Envía un mensaje y devuelve el texto de respuesta en pedacitos (streaming). */
     fun send(parts: List<Content>): Flow<String> {
         val c = conversation ?: throw IllegalStateException("El cerebro no está listo.")
-        return c.sendMessageAsync(Contents.of(parts))
+        return c.sendMessageAsync(Contents.of(parts), mapOf("enable_thinking" to false))
             .map { it.toString() }
             .flowOn(dispatcher)
     }

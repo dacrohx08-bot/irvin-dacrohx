@@ -41,7 +41,12 @@ class MusicPlayer(private val ctx: Context) {
     private fun norm(s: String) = Normalizer.normalize(s.lowercase(Locale.ROOT), Normalizer.Form.NFD)
         .replace(Regex("\\p{M}"), "").replace(Regex("[^a-z0-9 ]"), " ").replace(Regex("\\s+"), " ").trim()
 
+    @Volatile private var cache: List<Track>? = null
+    @Volatile private var cacheAt = 0L
+    private val normCache = HashMap<Long, Triple<String, String, String>>()
+
     private fun allTracks(): List<Track> {
+        cache?.let { if (System.currentTimeMillis() - cacheAt < 5 * 60_000) return it }
         val out = ArrayList<Track>()
         try {
             ctx.contentResolver.query(
@@ -62,6 +67,8 @@ class MusicPlayer(private val ctx: Context) {
             }
         } catch (_: SecurityException) {
         }
+        cache = out; cacheAt = System.currentTimeMillis()
+        synchronized(normCache) { normCache.clear() }
         return out
     }
 
@@ -75,7 +82,7 @@ class MusicPlayer(private val ctx: Context) {
         if (any) return all.shuffled()
         val words = q.split(" ").filter { it.length > 1 }
         return all.mapNotNull { t ->
-            val title = norm(t.title); val artist = norm(t.artist); val album = norm(t.album)
+            val (title, artist, album) = synchronized(normCache) { normCache.getOrPut(t.id) { Triple(norm(t.title), norm(t.artist), norm(t.album)) } }
             val hay = "$title $artist $album"
             var score = 0
             if (title == q) score += 10
@@ -158,7 +165,15 @@ class MusicPlayer(private val ctx: Context) {
     data class App(val pkg: String, val label: String)
 
     /** Apps de música instaladas que pueden reproducir por búsqueda (Poweramp, Spotify, YouTube Music...). */
+    @Volatile private var appsCache: List<App>? = null
+    @Volatile private var appsAt = 0L
+
     fun musicApps(): List<App> {
+        appsCache?.let { if (System.currentTimeMillis() - appsAt < 10 * 60_000) return it }
+        return loadMusicApps().also { appsCache = it; appsAt = System.currentTimeMillis() }
+    }
+
+    private fun loadMusicApps(): List<App> {
         val pm = ctx.packageManager
         val out = LinkedHashMap<String, App>()
         try {

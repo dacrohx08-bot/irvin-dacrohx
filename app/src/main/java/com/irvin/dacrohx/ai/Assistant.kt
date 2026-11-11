@@ -726,7 +726,7 @@ $rem
         })
         // Espera a que pase el tono para que no lo confunda con tu voz.
         viewModelScope.launch {
-            kotlinx.coroutines.delay(350)
+            kotlinx.coroutines.delay(250)
             if (recognizer !== sr) return@launch
             sr.startListening(recognizerIntent())
         }
@@ -738,9 +738,8 @@ $rem
         putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-MX")
         putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
         putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2200L)
-        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1800L)
-        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1500L)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1000L)
     }
 
     private fun finishRecognizer(text: String?) {
@@ -866,6 +865,15 @@ $rem
     /** Manos libres con texto ya reconocido por el oído offline (más rápido que mandar audio). */
     /** Procesa una orden hablada. Devuelve true si Irvin quedó esperando respuesta (hizo una pregunta). */
     suspend fun handsFreeText(command: String): Boolean {
+        // Órdenes simples (música, hora, linterna...) no necesitan al cerebro: van primero y al instante.
+        if (genJob?.isActive != true) quickCommand(command)?.let { r ->
+            if (r == "\u200B") { waitSpeech(); return false }
+            store.addChat(ChatMsg(role = "user", text = "🎙️ $command"))
+            store.addChat(ChatMsg(role = "model", text = r, actions = listOf("⚡ instantáneo")))
+            speaker.say(r, flush = true)
+            waitSpeech()
+            return expectsAnswer(r)
+        }
         if (!brain.ready && models.isReady()) speaker.say("Dame un segundo, estoy despertando.", flush = true)
         if (!ensureBrain()) {
             speaker.say("Todavía no tengo cerebro instalado. Abre la app primero.", flush = true)
@@ -996,7 +1004,7 @@ $rem
         })
         cont.invokeOnCancellation { finish(null) }
         // Espera a que pase el tono para que no lo confunda con tu voz.
-        viewModelScope.launch { kotlinx.coroutines.delay(350); if (!done) sr.startListening(recognizerIntent()) }
+        viewModelScope.launch { kotlinx.coroutines.delay(250); if (!done) sr.startListening(recognizerIntent()) }
     }
 
     fun setBubble(on: Boolean) {
