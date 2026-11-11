@@ -77,6 +77,24 @@ class Sounds(private val ctx: Context) {
         playRes(o.res, o.gain)
     }
 
+    private val lengths = HashMap<Int, Long>()
+
+    /** Duración del sonido de "te escucho" en ms (para no grabar el propio tono). */
+    fun wakeLengthMs(id: String): Long {
+        val res = opt(id.ifEmpty { "nucleo" }).res
+        if (res == 0) return 0
+        return synchronized(lengths) {
+            lengths.getOrPut(res) {
+                try {
+                    val r = android.media.MediaMetadataRetriever()
+                    ctx.resources.openRawResourceFd(res).use { fd -> r.setDataSource(fd.fileDescriptor, fd.startOffset, fd.length) }
+                    val ms = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 800L
+                    r.release(); ms
+                } catch (_: Exception) { 800L }
+            }
+        }
+    }
+
     /** Sonido de "listo, ya te escuché" (la pareja del sonido elegido). */
     fun end(id: String) {
         val o = opt(id.ifEmpty { "nucleo" })

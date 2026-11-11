@@ -289,7 +289,6 @@ class WakeWordService : Service() {
                 ar.startRecording()
                 val buf = ByteArray(4096)
                 var woke = false
-                val fast = assistant.store.settings.value.fastVoice
                 while (scope.isActive && !assistant.micHeld && assistant.mode.value == com.irvin.dacrohx.ai.Mode.IDLE) {
                     val n = ar.read(buf, 0, buf.size)
                     if (n <= 0) continue
@@ -314,7 +313,7 @@ class WakeWordService : Service() {
                     updateNotification("Te escucho…")
                     withContext(Dispatchers.Main) {
                         try {
-                            if (fast) assistant.quickVoiceTurn() else { beep(); delay(300); assistant.handsFreeTurn() }
+                            assistant.quickVoiceTurn()
                         } catch (e: Exception) { Log.w("Irvin", "turno", e) }
                     }
                     updateNotification("Di “Oye Irvin” y te escucho.")

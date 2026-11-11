@@ -100,10 +100,8 @@ class MainActivity : FragmentActivity() {
     private fun handleIntent(intent: Intent?) {
         if (intent?.action == "com.irvin.dacrohx.VOZ") {
             intent.action = null
-            lifecycleScope.launch {
-                vm.brain.state.first { it is BrainState.Ready }
-                vm.toggleListening()
-            }
+            // Escucha al instante; el cerebro termina de despertar mientras hablas.
+            lifecycleScope.launch { kotlinx.coroutines.delay(300); vm.toggleListening() }
         }
     }
 }

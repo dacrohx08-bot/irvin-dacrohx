@@ -94,8 +94,23 @@ class Online(private val ctx: Context) {
         "Wikipedia — $t: " + j.optString("extract").take(1500)
     }
 
+    @Volatile private var cityCache: Pair<Long, String>? = null
+
+    /** Ciudad aproximada por la red (para "¿cómo está el clima?" sin decir dónde). Se guarda 6 h. */
+    fun myCity(): String? {
+        cityCache?.let { if (System.currentTimeMillis() - it.first < 6 * 3600_000L) return it.second }
+        if (!connected()) return null
+        return try {
+            val j = JSONObject(get("https://ipwho.is/?lang=es&fields=city,success", 5000))
+            j.optString("city").takeIf { it.isNotBlank() }?.also { cityCache = System.currentTimeMillis() to it }
+        } catch (_: Exception) { null }
+    }
+
+    /** Versión corta para decir en voz alta. */
+    fun weatherBrief(city: String): String = weather(city, brief = true)
+
     /** Clima actual y de los próximos días (Open-Meteo, sin cuenta). */
-    fun weather(city: String): String = guard {
+    fun weather(city: String, brief: Boolean = false): String = guard {
         val g = JSONObject(get("https://geocoding-api.open-meteo.com/v1/search?name=${enc(city)}&count=1&language=es"))
         val r = g.optJSONArray("results")?.optJSONObject(0) ?: return@guard "No encontré la ciudad '$city'."
         val lat = r.getDouble("latitude"); val lon = r.getDouble("longitude")
@@ -109,6 +124,13 @@ class Online(private val ctx: Context) {
         )
         val c = w.getJSONObject("current")
         val d = w.getJSONObject("daily")
+        if (brief) {
+            val tMin = d.getJSONArray("temperature_2m_min").getDouble(0).toInt()
+            val tMax = d.getJSONArray("temperature_2m_max").getDouble(0).toInt()
+            val rain = d.getJSONArray("precipitation_probability_max").optInt(0)
+            return@guard "En ${r.optString("name")} hay ${c.getDouble("temperature_2m").toInt()} grados y está ${code(c.getInt("weather_code"))}. " +
+                "Hoy entre $tMin y $tMax grados" + (if (rain >= 30) ", con $rain% de probabilidad de lluvia." else ", sin lluvia a la vista.")
+        }
         val days = (0 until 3).joinToString("; ") { i ->
             val label = when (i) { 0 -> "hoy"; 1 -> "mañana"; else -> "pasado mañana" }
             "$label ${code(d.getJSONArray("weather_code").getInt(i))}, " +

@@ -12,7 +12,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.io.ByteArrayOutputStream
 import java.util.Locale
-import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.sqrt
 
 /** Graba la voz a 16 kHz mono para que Gemma la entienda directamente (sin internet). */
@@ -83,7 +82,8 @@ class VoiceRecorder {
                     var autoStop = pcm.size() >= maxBytes
                     if (vad) {
                         // Mide el ruido de fondo (ventilador, ambiente) al inicio y se adapta.
-                        if (totalMs <= 400) noise = if (noise < 0f) lv else (noise * 0.7f + lv * 0.3f)
+                        // Usa el nivel MÁS BAJO de los primeros 500 ms: así la cola del tono o el inicio de tu voz no lo inflan.
+                        if (totalMs in 101..500) noise = if (noise < 0f) lv else minOf(noise, lv)
                         val base = noise.coerceAtLeast(0.01f)
                         val talk = maxOf(0.045f, base * 2.6f)
                         val quiet = maxOf(0.03f, base * 1.7f)
@@ -136,7 +136,6 @@ class VoiceRecorder {
 /** Voz de Irvin con el motor de Android (funciona offline con la voz en español descargada). */
 class Speaker(ctx: Context) {
     private var ready = false
-    private val pending = AtomicInteger(0)
     private val _speaking = MutableStateFlow(false)
     val speaking: StateFlow<Boolean> = _speaking.asStateFlow()
     private var buffer = StringBuilder()
@@ -180,6 +179,7 @@ class Speaker(ctx: Context) {
 
     init {
         tts = TextToSpeech(ctx.applicationContext) { status ->
+            if (status != TextToSpeech.SUCCESS) { synchronized(early) { early.clear() }; _speaking.value = false }
             if (status == TextToSpeech.SUCCESS) {
                 ready = true
                 val mx = tts.setLanguage(Locale("es", "MX"))
@@ -195,15 +195,19 @@ class Speaker(ctx: Context) {
         }
         tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) { _speaking.value = true }
-            override fun onDone(utteranceId: String?) {
-                if (pending.decrementAndGet() <= 0) { pending.set(0); _speaking.value = false }
-            }
+            override fun onDone(utteranceId: String?) { finished(utteranceId) }
             @Deprecated("Deprecated in Java")
-            override fun onError(utteranceId: String?) { onDone(utteranceId) }
-            override fun onStop(utteranceId: String?, interrupted: Boolean) {
-                pending.set(0); _speaking.value = false
-            }
+            override fun onError(utteranceId: String?) { finished(utteranceId) }
+            override fun onError(utteranceId: String?, errorCode: Int) { finished(utteranceId) }
+            override fun onStop(utteranceId: String?, interrupted: Boolean) { finished(utteranceId) }
         })
+    }
+
+    /** Frases que faltan por decir. "Hablando" se apaga solo cuando ya no queda ninguna. */
+    private val queue = java.util.Collections.synchronizedSet(LinkedHashSet<String>())
+    private fun finished(id: String?) {
+        if (id != null) queue.remove(id)
+        if (queue.isEmpty() && synchronized(early) { early.isEmpty() }) _speaking.value = false
     }
 
     private fun clean(s: String) = s
@@ -234,17 +238,33 @@ class Speaker(ctx: Context) {
         if (t.isEmpty()) return
         tts.setSpeechRate(rate)
         tts.setPitch(pitch)
-        pending.incrementAndGet()
-        tts.speak(t, if (flush) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD, null, "u" + System.nanoTime())
+        val id = "u" + System.nanoTime()
+        if (flush) queue.clear()
+        queue += id
+        // Se marca "hablando" desde YA (no hasta que el motor arranque), para que nadie abra el micrófono encima.
+        _speaking.value = true
+        if (tts.speak(t, if (flush) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD, null, id) != TextToSpeech.SUCCESS) finished(id)
     }
 
     /** Habla por frases mientras el modelo sigue escribiendo (respuesta más rápida). */
     fun feed(delta: String) {
         buffer.append(delta)
         while (true) {
-            val idx = buffer.indexOfFirst { it == '.' || it == '!' || it == '?' || it == '\n' || it == ':' || it == ';' }
+            // Corta en fin de frase real: "?" "!" o salto de línea, o "." ":" ";" seguidos de espacio
+            // (así "1.5" o "10:30" no se parten a la mitad).
+            var idx = -1
+            for (i in buffer.indices) {
+                val c = buffer[i]
+                if (c == '\n' || c == '?' || c == '!') { idx = i; break }
+                if ((c == '.' || c == ':' || c == ';') && i + 1 < buffer.length && buffer[i + 1].isWhitespace()) { idx = i; break }
+            }
             if (idx < 0) break
             val sentence = buffer.substring(0, idx + 1)
+            // "1." de una lista no se dice solo: espera al resto del paso.
+            if (sentence.trim().trimEnd('.').all { it.isDigit() } && buffer.length < 200) {
+                if (sentence.isBlank()) { buffer.delete(0, idx + 1); continue }
+                break
+            }
             buffer.delete(0, idx + 1)
             if (sentence.isNotBlank()) say(sentence)
         }
@@ -258,7 +278,8 @@ class Speaker(ctx: Context) {
 
     fun stop() {
         buffer.clear()
-        pending.set(0)
+        queue.clear()
+        synchronized(early) { early.clear() }
         if (ready) tts.stop()
         _speaking.value = false
     }
