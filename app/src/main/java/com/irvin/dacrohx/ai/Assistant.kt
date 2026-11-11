@@ -551,7 +551,7 @@ $rem
         store.addChat(reply)
         currentReplyId = reply.id
         _mode.value = Mode.THINKING
-        val autoSpeak = forceSpeak || store.settings.value.autoSpeak
+        val autoSpeak = forceSpeak || voiceTurn || store.settings.value.autoSpeak
         speaker.rate = store.settings.value.speechRate
         genJob = viewModelScope.launch {
             val t0 = System.currentTimeMillis()
