@@ -942,6 +942,9 @@ fun SettingsScreen(vm: Assistant, brain: BrainState) {
             )
         }
 
+        Label("Diagnóstico de voz")
+        VoiceDiagPanel(vm)
+
         Label("Manos libres · “Oye Irvin”")
         WakePanel(vm, s.wakeWord)
 
@@ -987,6 +990,32 @@ fun SettingsScreen(vm: Assistant, brain: BrainState) {
     if (confirmClear) Confirm("¿Borrar toda la conversación? Tus recuerdos y recordatorios se quedan.", { confirmClear = false }) { vm.newChat() }
     if (confirmModel) Confirm("¿Borrar el modelo (3.7 GB)? Tendrás que descargarlo otra vez.", { confirmModel = false }) {
         vm.deleteModel()
+    }
+}
+
+@Composable
+private fun VoiceDiagPanel(vm: Assistant) {
+    val ctx = LocalContext.current
+    val lines by com.irvin.dacrohx.device.VoiceLog.lines.collectAsState()
+    Panel {
+        Text("Registro de lo que pasa al hablarle a Irvin. Si algo falla, cópialo y pégalo en el chat con Claude.", color = C.Mut, fontSize = 13.sp)
+        Spacer(Modifier.height(8.dp))
+        Column(
+            Modifier.fillMaxWidth().heightIn(max = 260.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFF07070A))
+                .verticalScroll(rememberScrollState(), reverseScrolling = true).padding(8.dp)
+        ) {
+            if (lines.isEmpty()) Text("(vacío — háblale a Irvin y vuelve aquí)", color = C.Mut, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+            lines.forEach { Text(it, color = C.Txt, fontSize = 11.sp, fontFamily = FontFamily.Monospace) }
+        }
+        Row(Modifier.padding(top = 8.dp)) {
+            OutlinedButton(onClick = {
+                val cm = ctx.getSystemService(android.content.ClipboardManager::class.java)
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("Diagnóstico de voz de Irvin", lines.joinToString("\n")))
+                vm.toast("Copiado. Pégalo en el chat con Claude.")
+            }) { Text("Copiar") }
+            Spacer(Modifier.width(8.dp))
+            OutlinedButton(onClick = { com.irvin.dacrohx.device.VoiceLog.clear() }) { Text("Borrar") }
+        }
     }
 }
 

@@ -619,7 +619,7 @@ $rem
             }
             if (autoSpeak && failed == null) speaker.finish()
             lastReplyText = if (failed == null) finalText else null
-            if (!forceSpeak && failed == null) followUpInApp(finalText) else if (!forceSpeak) voiceTurn = false
+            if (!forceSpeak && failed == null) followUpInApp(finalText) else if (!forceSpeak) endVoiceTurn()
             currentReplyId = null
             _mode.value = if (speaker.speaking.value) Mode.SPEAKING else Mode.IDLE
         }
@@ -647,6 +647,7 @@ $rem
         speaker.stop()
         val ctx = getApplication<Application>()
         val fast = store.settings.value.fastVoice && !fastVoiceBroken && SpeechRecognizer.isRecognitionAvailable(ctx)
+        com.irvin.dacrohx.device.VoiceLog.add("Micrófono de la app → " + (if (fast) "reconocedor de Android" else "oído de Gemma"))
         playWake()
         holdMic()
         if (fast || !brain.audioEnabled) {
@@ -654,8 +655,8 @@ $rem
             startRecognizer()
         } else if (brain.audioEnabled) {
             micBusy = true
-            if (recorder.start()) _mode.value = Mode.LISTENING
-            else toast("No pude usar el micrófono.")
+            if (recorder.start(stopOnSilence = true)) _mode.value = Mode.LISTENING
+            else { micBusy = false; com.irvin.dacrohx.device.VoiceLog.add("No pude abrir el micrófono propio"); toast("No pude usar el micrófono.") }
         } else {
             startRecognizer()
         }
@@ -668,7 +669,9 @@ $rem
         micBusy = false
         _mode.value = Mode.IDLE
         playEnd()
-        if (wav == null) { toast("No te escuché, mantén el micrófono un poco más."); return }
+        com.irvin.dacrohx.device.VoiceLog.add("Oído de Gemma: " + (if (wav == null) "no se escuchó voz" else "audio de " + ((wav.size - 44) / 32000) + " s"))
+        if (wav == null) { toast("No te escuché."); endVoiceTurn(); return }
+        voiceTurn = true
         sendVoice(wav)
     }
 
@@ -686,12 +689,13 @@ $rem
         _partialSpeech.value = ""
         _mode.value = Mode.LISTENING
         sr.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) { _mode.value = Mode.LISTENING }
+            override fun onReadyForSpeech(params: Bundle?) { _mode.value = Mode.LISTENING; com.irvin.dacrohx.device.VoiceLog.add("App: listo para escuchar") }
             override fun onBeginningOfSpeech() {}
             override fun onRmsChanged(rmsdB: Float) {}
             override fun onBufferReceived(buffer: ByteArray?) {}
             override fun onEndOfSpeech() {}
             override fun onError(error: Int) {
+                com.irvin.dacrohx.device.VoiceLog.add("App: error " + com.irvin.dacrohx.device.VoiceLog.errName(error) + (if (_partialSpeech.value.isNotBlank()) " (tenía: " + _partialSpeech.value + ")" else ""))
                 if (error in retryable && _partialSpeech.value.isBlank() && inAppRetries < 2) {
                     inAppRetries++
                     try { sr.destroy() } catch (_: Exception) {}
@@ -699,8 +703,16 @@ $rem
                     viewModelScope.launch { kotlinx.coroutines.delay(600L); micBusy = true; startRecognizer() }
                     return
                 }
-                if (error in retryable && _partialSpeech.value.isBlank())
-                    store.addChat(ChatMsg(role = "sys", text = "🎙️ No pude abrir el micrófono (error $error). Toca el micrófono otra vez."))
+                if (error in retryable && _partialSpeech.value.isBlank() && brain.audioEnabled) {
+                    // El reconocedor de Android no funciona: usar el oído propio de Irvin.
+                    fastVoiceBroken = true
+                    com.irvin.dacrohx.device.VoiceLog.add("Reconocedor de Android falla → cambio al oído de Gemma")
+                    recognizer?.let { try { it.destroy() } catch (_: Exception) {} }
+                    recognizer = null
+                    micBusy = true
+                    if (recorder.start(stopOnSilence = true)) { _mode.value = Mode.LISTENING; return }
+                    micBusy = false
+                }
                 inAppRetries = 0
                 val noOffline = error == SpeechRecognizer.ERROR_NETWORK || error == SpeechRecognizer.ERROR_NETWORK_TIMEOUT ||
                     error == SpeechRecognizer.ERROR_SERVER || error == 13 /* LANGUAGE_UNAVAILABLE */ || error == 12 /* LANGUAGE_NOT_SUPPORTED */
@@ -733,6 +745,7 @@ $rem
             override fun onResults(results: Bundle?) {
                 inAppRetries = 0
                 val r = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+                com.irvin.dacrohx.device.VoiceLog.add("App: entendí \"" + (r ?: "") + "\"")
                 finishRecognizer(r?.takeIf { it.isNotBlank() } ?: _partialSpeech.value.takeIf { it.isNotBlank() })
             }
             override fun onPartialResults(partialResults: Bundle?) {
@@ -755,8 +768,6 @@ $rem
         putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-MX")
         putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
         putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L)
-        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1000L)
     }
 
     private fun finishRecognizer(text: String?) {
@@ -766,7 +777,7 @@ $rem
         micBusy = false
         _partialSpeech.value = ""
         _mode.value = Mode.IDLE
-        if (!text.isNullOrBlank()) { voiceTurn = true; followMisses = 0; holdMic(90_000); sendText(text) }
+        if (!text.isNullOrBlank()) { voiceTurn = true; followMisses = 0; holdMic(60_000); sendText(text) }
     }
 
     // ------------------------------------------------------------------ imagen
@@ -848,13 +859,14 @@ $rem
      * Turno completo manos libres: escucha el comando (se detiene sola con el silencio),
      * lo manda al cerebro y responde en voz alta. Devuelve cuando terminó de hablar.
      */
-    suspend fun handsFreeTurn() {
+    suspend fun handsFreeTurn(): Boolean {
         if (!brain.ready && models.isReady()) speaker.say("Dame un segundo, estoy despertando.", flush = true)
         if (!ensureBrain()) {
             speaker.say("Todavía no tengo cerebro instalado. Abre la app primero.", flush = true)
-            return
+            return false
         }
-        if (genJob?.isActive == true || _mode.value == Mode.LISTENING) return
+        if (genJob?.isActive == true || _mode.value == Mode.LISTENING) return false
+        com.irvin.dacrohx.device.VoiceLog.add("Oído de Gemma: escuchando (se detiene con el silencio)")
         speaker.stop()
         micBusy = true
         val done = CompletableDeferred<ByteArray?>()
@@ -862,7 +874,7 @@ $rem
         if (!recorder.start(stopOnSilence = true)) {
             micBusy = false
             recorder.onAutoStop = { viewModelScope.launch { stopListeningAndSend() } }
-            return
+            return false
         }
         _mode.value = Mode.LISTENING
         val wav = done.await()
@@ -876,7 +888,8 @@ $rem
         kotlinx.coroutines.delay(300)
         speaker.speaking.first { !it }
         micBusy = false
-        lastReplyText?.let { notifyReply(it) }
+        lastReplyText?.let { if (!uiVisible) notifyReply(it) }
+        return expectsAnswer(lastReplyText ?: "")
     }
 
     /** Manos libres con texto ya reconocido por el oído offline (más rápido que mandar audio). */
@@ -922,13 +935,23 @@ $rem
     }
 
     /** ¿Irvin quedó esperando una respuesta? (terminó con pregunta o hay algo por elegir/confirmar) */
-    private fun expectsAnswer(reply: String): Boolean =
-        reply.trimEnd().endsWith("?") || _musicChoice.value != null || _pending.value != null
+    private fun expectsAnswer(reply: String): Boolean {
+        val r = reply.trimEnd().endsWith("?") || _musicChoice.value != null || _pending.value != null
+        com.irvin.dacrohx.device.VoiceLog.add(if (r) "Irvin preguntó → vuelvo a escuchar" else "Fin de la conversación")
+        return r
+    }
 
     /** Turno de voz rápido (burbuja / widget): dictado local si se puede, si no audio a Gemma. */
     suspend fun quickVoiceTurn() {
         val ctx = getApplication<Application>()
-        if (!(store.settings.value.fastVoice && !fastVoiceBroken && SpeechRecognizer.isRecognitionAvailable(ctx))) { handsFreeTurn(); return }
+        com.irvin.dacrohx.device.VoiceLog.add("Turno de voz: " + (if (store.settings.value.fastVoice && !fastVoiceBroken) "reconocedor de Android" else "oído de Gemma"))
+        if (!(store.settings.value.fastVoice && !fastVoiceBroken && SpeechRecognizer.isRecognitionAvailable(ctx))) {
+            try {
+                var n = 0
+                while (n++ < 5) { holdMic(90_000); if (!handsFreeTurn()) break; kotlinx.coroutines.delay(450) }
+            } finally { releaseMic() }
+            return
+        }
         // Modo conversación: si Irvin pregunta algo, vuelve a escuchar solo (hasta 4 veces seguidas).
         var turns = 0
         var misses = 0
@@ -940,7 +963,7 @@ $rem
             micBusy = true
             val text = try { listenOnce() } finally { micBusy = false; _mode.value = Mode.IDLE; _partialSpeech.value = "" }
             if (text.isNullOrBlank()) {
-                if (fastVoiceBroken) { handsFreeTurn(); return }
+                if (fastVoiceBroken) { var n = 0; while (n++ < 5) { holdMic(90_000); if (!handsFreeTurn()) break; kotlinx.coroutines.delay(450) }; return }
                 misses++
                 if (misses >= 2) { speaker.say("Ok, aquí estoy si me necesitas.", flush = true); return }
                 speaker.say("No te escuché, ¿me repites?", flush = true); waitSpeech()
@@ -987,7 +1010,10 @@ $rem
             if (lastVoiceError !in retryable) return null
             kotlinx.coroutines.delay(500L + attempt * 400L)
         }
-        if (lastVoiceError != 0) store.addChat(ChatMsg(role = "sys", text = "🎙️ No pude abrir el micrófono (error $lastVoiceError). Toca el micrófono para hablar."))
+        if (lastVoiceError in retryable) {
+            fastVoiceBroken = true
+            com.irvin.dacrohx.device.VoiceLog.add("Reconocedor de Android falla → uso el oído de Gemma")
+        }
         return null
     }
 
@@ -1004,18 +1030,20 @@ $rem
             if (cont.isActive) cont.resumeWith(Result.success(t))
         }
         sr.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) {}
+            override fun onReadyForSpeech(params: Bundle?) { com.irvin.dacrohx.device.VoiceLog.add("Voz: listo para escuchar") }
             override fun onBeginningOfSpeech() {}
             override fun onRmsChanged(rmsdB: Float) {}
             override fun onBufferReceived(buffer: ByteArray?) {}
             override fun onEndOfSpeech() {}
             override fun onError(error: Int) {
+                com.irvin.dacrohx.device.VoiceLog.add("Voz: error " + com.irvin.dacrohx.device.VoiceLog.errName(error) + (if (lastPartial.isNotBlank()) " (tenía: $lastPartial)" else ""))
                 lastVoiceError = error
                 if (error == SpeechRecognizer.ERROR_NETWORK || error == SpeechRecognizer.ERROR_SERVER || error == 13 || error == 12) fastVoiceBroken = true
                 finish(lastPartial.takeIf { it.isNotBlank() })
             }
             override fun onResults(results: Bundle?) {
                 val r = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+                com.irvin.dacrohx.device.VoiceLog.add("Voz: entendí \"" + (r ?: "") + "\"")
                 finish(r?.takeIf { it.isNotBlank() } ?: lastPartial.takeIf { it.isNotBlank() })
             }
             override fun onPartialResults(partialResults: Bundle?) {

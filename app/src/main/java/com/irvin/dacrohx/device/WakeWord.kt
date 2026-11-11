@@ -203,7 +203,7 @@ class WakeWordService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        if (loop?.isActive != true) loop = scope.launch { listenLoop() }
+        if (loop?.isActive != true) { VoiceLog.add("Escucha de “Oye Irvin” iniciada"); loop = scope.launch { listenLoop() } }
         _running.value = true
         return START_STICKY
     }
@@ -308,6 +308,7 @@ class WakeWordService : Service() {
 
                 if (woke) {
                     Log.i("Irvin", "¡Oye Irvin detectado!")
+                    VoiceLog.add("“Oye Irvin” detectado")
                     // El oído pequeño solo detecta el nombre; la orden la escucha un reconocedor preciso.
                     acquireWake()
                     updateNotification("Te escucho…")
