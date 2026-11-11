@@ -81,9 +81,9 @@ class VoiceRecorder {
                     totalMs += chunkMs
                     var autoStop = pcm.size() >= maxBytes
                     if (vad) {
-                        if (lv > 0.09f) { heardSpeech = true; silenceMs = 0 } else silenceMs += chunkMs
-                        if (heardSpeech && silenceMs >= 1300) autoStop = true
-                        if (!heardSpeech && totalMs >= 6000) autoStop = true
+                        if (lv > 0.05f) { heardSpeech = true; silenceMs = 0 } else silenceMs += chunkMs
+                        if (heardSpeech && silenceMs >= 1900) autoStop = true
+                        if (!heardSpeech && totalMs >= 7000) autoStop = true
                     }
                     if (autoStop) {
                         running = false

@@ -323,8 +323,8 @@ class WakeWordService : Service() {
                             val p = JSONObject(rec.partialResult).optString("partial").trim()
                             if (p != partial) { partial = p; lastVoice = now }
                         }
-                        if (partial.isEmpty() && now - t0 > 6000) break
-                        if (partial.isNotEmpty() && now - lastVoice > 1500) { command = partial; break }
+                        if (partial.isEmpty() && now - t0 > 7000) break
+                        if (partial.isNotEmpty() && now - lastVoice > 2000) { command = partial; break }
                         if (now - t0 > 15000) { command = partial; break }
                     }
                     if (command.isEmpty()) command = JSONObject(rec.finalResult).optString("text").trim()

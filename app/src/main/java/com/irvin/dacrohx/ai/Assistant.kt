@@ -520,6 +520,7 @@ $rem
         else SpeechRecognizer.createSpeechRecognizer(ctx)
         recognizer = sr
         _partialSpeech.value = ""
+        _mode.value = Mode.LISTENING
         sr.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) { _mode.value = Mode.LISTENING }
             override fun onBeginningOfSpeech() {}
@@ -534,28 +535,45 @@ $rem
                         sr.triggerModelDownload(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-MX"))
                     } catch (_: Exception) {}
                 }
+                // Si ya había entendido algo, úsalo en vez de tirarlo.
+                val heard = _partialSpeech.value.trim()
+                if (heard.isNotEmpty() && !noOffline) { finishRecognizer(heard); return }
                 if (noOffline && brain.audioEnabled) {
                     fastVoiceBroken = true
-                    toast("El dictado rápido necesita internet o el paquete de voz offline. Ahora uso mi oído propio: toca el micrófono otra vez.")
-                } else if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
-                    toast("No te escuché bien, intenta otra vez.")
+                    toast("El dictado rápido no está disponible sin internet. Ahora uso mi oído propio: toca el micrófono otra vez.")
+                } else {
+                    speaker.say("No te escuché, ¿me repites?", flush = true)
+                    toast("No te escuché bien. Toca el micrófono y habla un poco más cerca.")
                 }
                 finishRecognizer(null)
             }
             override fun onResults(results: Bundle?) {
-                finishRecognizer(results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull())
+                val r = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+                finishRecognizer(r?.takeIf { it.isNotBlank() } ?: _partialSpeech.value.takeIf { it.isNotBlank() })
             }
             override fun onPartialResults(partialResults: Bundle?) {
-                _partialSpeech.value = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: ""
+                val p = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+                if (!p.isNullOrBlank()) _partialSpeech.value = p
             }
             override fun onEvent(eventType: Int, params: Bundle?) {}
         })
-        sr.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-MX")
-            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-        })
+        // Espera a que pase el tono para que no lo confunda con tu voz.
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(350)
+            if (recognizer !== sr) return@launch
+            sr.startListening(recognizerIntent())
+        }
+    }
+
+    /** Pide al reconocedor que tolere pausas al hablar (no se corte a la mitad). */
+    private fun recognizerIntent() = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-MX")
+        putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+        putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2200L)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1800L)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1500L)
     }
 
     private fun finishRecognizer(text: String?) {
@@ -713,7 +731,9 @@ $rem
             if (!text.isNullOrBlank()) playEnd()
             micBusy = false
             _mode.value = Mode.IDLE
-            if (!text.isNullOrBlank()) handsFreeText(text) else if (!fastVoiceBroken) toast("No te escuché.")
+            _partialSpeech.value = ""
+            if (!text.isNullOrBlank()) handsFreeText(text)
+            else if (!fastVoiceBroken) { speaker.say("No te escuché, ¿me repites?", flush = true); toast("No te escuché.") }
             if (fastVoiceBroken) handsFreeTurn()
         } else handsFreeTurn()
     }
@@ -723,6 +743,7 @@ $rem
         val sr = if (SpeechRecognizer.isOnDeviceRecognitionAvailable(ctx)) SpeechRecognizer.createOnDeviceSpeechRecognizer(ctx)
         else SpeechRecognizer.createSpeechRecognizer(ctx)
         var done = false
+        var lastPartial = ""
         fun finish(t: String?) {
             if (done) return
             done = true
@@ -737,21 +758,36 @@ $rem
             override fun onEndOfSpeech() {}
             override fun onError(error: Int) {
                 if (error == SpeechRecognizer.ERROR_NETWORK || error == SpeechRecognizer.ERROR_SERVER || error == 13 || error == 12) fastVoiceBroken = true
-                finish(null)
+                finish(lastPartial.takeIf { it.isNotBlank() })
             }
-            override fun onResults(results: Bundle?) { finish(results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()) }
+            override fun onResults(results: Bundle?) {
+                val r = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+                finish(r?.takeIf { it.isNotBlank() } ?: lastPartial.takeIf { it.isNotBlank() })
+            }
             override fun onPartialResults(partialResults: Bundle?) {
-                _partialSpeech.value = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: ""
+                val p = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+                if (!p.isNullOrBlank()) { lastPartial = p; _partialSpeech.value = p }
             }
             override fun onEvent(eventType: Int, params: Bundle?) {}
         })
         cont.invokeOnCancellation { finish(null) }
-        sr.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-MX")
-            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-        })
+        // Espera a que pase el tono para que no lo confunda con tu voz.
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(350)
+            if (recognizer !== sr) return@launch
+            sr.startListening(recognizerIntent())
+        }
+    }
+
+    /** Pide al reconocedor que tolere pausas al hablar (no se corte a la mitad). */
+    private fun recognizerIntent() = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-MX")
+        putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+        putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2200L)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1800L)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1500L)
     }
 
     fun setBubble(on: Boolean) {
