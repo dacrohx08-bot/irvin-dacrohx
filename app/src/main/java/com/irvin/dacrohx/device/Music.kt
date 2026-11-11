@@ -210,15 +210,33 @@ class MusicPlayer(private val ctx: Context) {
     /** Reproduce en otra app. Primero por búsqueda; si no, abre la canción encontrada en el teléfono. */
     fun playInApp(app: App, query: String): Boolean {
         val pm = ctx.packageManager
-        // YouTube (normal / Premium): abre la búsqueda del video musical.
+        // YouTube (normal / Premium): busca el video y lo REPRODUCE directo, con un mix de canciones parecidas.
         if (app.pkg == "com.google.android.youtube") {
-            val q = if (query.isBlank() || norm(query) in setOf("lo que sea", "la que sea", "musica")) "música" else query
-            val i = Intent(Intent.ACTION_SEARCH).setPackage(app.pkg).putExtra("query", q).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            try { stop(); ctx.startActivity(i); return true } catch (_: Exception) {}
-            try {
-                ctx.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.youtube.com/results?search_query=" + android.net.Uri.encode(q)))
-                    .setPackage(app.pkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); return true
-            } catch (_: Exception) {}
+            val generic = query.isBlank() || norm(query) in setOf("lo que sea", "la que sea", "musica", "algo", "cualquier cosa")
+            val q = if (generic) "música mix" else query
+            stop()
+            Thread {
+                val id = try { youtubeVideoId(q) } catch (_: Exception) { null }
+                val uri = if (id != null) "https://www.youtube.com/watch?v=$id&list=RD$id"
+                else "https://www.youtube.com/results?search_query=" + android.net.Uri.encode(q)
+                val view = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(uri)).setPackage(app.pkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                try { ctx.startActivity(view) } catch (_: Exception) {
+                    try { ctx.startActivity(Intent(Intent.ACTION_SEARCH).setPackage(app.pkg).putExtra("query", q).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (_: Exception) {}
+                }
+            }.apply { name = "irvin-youtube" }.start()
+            return true
+        }
+        // YouTube Music: también directo a la canción si hay internet.
+        if (app.pkg == "com.google.android.apps.youtube.music" && query.isNotBlank() && norm(query) !in setOf("lo que sea", "la que sea", "musica")) {
+            stop()
+            Thread {
+                val id = try { youtubeVideoId(query) } catch (_: Exception) { null }
+                val i = if (id != null) Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://music.youtube.com/watch?v=$id&list=RDAMVM$id"))
+                else Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH).putExtra(SearchManager.QUERY, query)
+                    .putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
+                try { ctx.startActivity(i.setPackage(app.pkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (_: Exception) {}
+            }.apply { name = "irvin-ytmusic" }.start()
+            return true
         }
         val hits = if (query.isNotBlank()) search(query) else emptyList()
         val isArtist = hits.isNotEmpty() && norm(hits.first().artist).contains(norm(query))
@@ -250,6 +268,30 @@ class MusicPlayer(private val ctx: Context) {
             try { ctx.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); return true } catch (_: Exception) {}
         }
         return false
+    }
+
+    /** Primer video (no anuncio) de la búsqueda en YouTube. Necesita internet; si no, null. */
+    private fun youtubeVideoId(q: String): String? {
+        val url = java.net.URL("https://www.youtube.com/results?hl=es&gl=MX&search_query=" + java.net.URLEncoder.encode(q, "UTF-8"))
+        val c = url.openConnection() as java.net.HttpURLConnection
+        c.connectTimeout = 4000; c.readTimeout = 5000
+        c.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36")
+        c.setRequestProperty("Accept-Language", "es-MX,es;q=0.9")
+        c.setRequestProperty("Cookie", "CONSENT=YES+1")
+        return try {
+            val html = c.inputStream.bufferedReader().use { r ->
+                val sb = StringBuilder(); val buf = CharArray(16384)
+                // Lee solo hasta encontrar el primer video (más rápido).
+                while (sb.length < 1_500_000) {
+                    val n = r.read(buf); if (n < 0) break; sb.append(buf, 0, n)
+                    val k = sb.indexOf("\"videoRenderer\":{\"videoId\"", maxOf(0, sb.length - n - 40))
+                    if (k >= 0 && sb.length > k + 60) break
+                }
+                sb.toString()
+            }
+            Regex("\"videoRenderer\":\\{\"videoId\":\"([A-Za-z0-9_-]{11})\"").find(html)?.groupValues?.get(1)
+                ?: Regex("\"videoId\":\"([A-Za-z0-9_-]{11})\"").find(html)?.groupValues?.get(1)
+        } finally { c.disconnect() }
     }
 
     /** Pide a una app de música instalada que busque y reproduzca (Spotify / YouTube Music con internet). */

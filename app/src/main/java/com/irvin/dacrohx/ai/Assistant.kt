@@ -241,8 +241,13 @@ class Assistant private constructor(private val app: Application) {
         var app = ""
         Regex("\\s+(en|con|desde|por)\\s+($apps)\\s*$").find(rest)?.let { app = it.groupValues[2]; rest = rest.substring(0, it.range.first) }
         if (app.isEmpty()) Regex("^($apps)\\s+(.*)$").find(rest)?.let { app = it.groupValues[1]; rest = it.groupValues[2] }
+        // "música en YouTube Premium de Maná": la app puede venir en medio.
+        if (app.isEmpty()) Regex("\\s*\\b(en|con|desde|por)\\s+($apps)\\b\\s*").find(rest)?.let {
+            app = it.groupValues[2]; rest = (rest.substring(0, it.range.first) + " " + rest.substring(it.range.last + 1)).replace(Regex("\\s+"), " ").trim()
+        }
         val stripped = rest.replace(Regex("^(algo de |un poco de |unas? |la |el |las |los )"), "")
-            .replace(Regex("^(musica|canciones|cancion|rolas|rola|temas|tema)(\\s+(de|del|a|al))?\\s*"), "").trim()
+            .replace(Regex("^(musica|canciones|cancion|rolas|rola|temas|tema|videos?)(\\s+(de|del|a|al))?\\s*"), "")
+            .replace(Regex("^(la |el |los |las )?(grupo|banda|cantante|artista)\\s+"), "").trim()
         val isMusic = Regex("\\b(musica|cancion|canciones|rola|rolas|disco|album|tema)\\b").containsMatchIn(rest) || app.isNotEmpty()
         if (!isMusic) return null
         return stripped.ifEmpty { "lo que sea" } to app.replace("power amp", "poweramp").replace("you tube", "youtube")
