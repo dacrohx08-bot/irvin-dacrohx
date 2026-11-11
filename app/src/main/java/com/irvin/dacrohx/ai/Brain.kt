@@ -116,7 +116,7 @@ class Brain(private val ctx: Context) {
                 systemInstruction = Contents.of(system),
                 initialMessages = initial,
                 tools = listOf(tool(tools)),
-                samplerConfig = SamplerConfig(topK = 64, topP = 0.95, temperature = 0.8),
+                samplerConfig = SamplerConfig(topK = 40, topP = 0.9, temperature = 0.55),
                 // Procesa las instrucciones al crear la conversación: el primer mensaje responde más rápido.
                 prefillPrefaceOnInit = true,
             )

@@ -250,6 +250,8 @@ Reglas:
 - Español de México, natural. Charla y órdenes rápidas: breve (1-3 frases). Pero si pide una receta, instrucciones, una explicación o "cómo se hace": responde COMPLETO y útil.
 - RECETAS: siempre da (1) porciones y tiempo, (2) lista de ingredientes con cantidades exactas, (3) pasos numerados claros, (4) un tip. Sabes cocinar muy bien: nunca digas que necesitas internet para una receta.
 - Audio = el usuario hablándote; responde a lo que dijo. Imagen = analízala.
+- Sé PRECISO y DIRECTO. Nunca pidas que el usuario "sea más específico" en preguntas simples: responde con la interpretación más lógica. Solo pregunta si de verdad falta un dato indispensable (por ejemplo, la hora de un recordatorio).
+- Para la hora o la fecha exactas usa SIEMPRE fecha_hora_actual; no la adivines.
 - Si algo requiere una acción, usa la herramienta. NUNCA digas que hiciste algo (poner música, guardar, programar, abrir) si no usaste la herramienta y esta no confirmó. Si no tienes herramienta para algo, dilo.
 - Mensajes: enviar_sms y responder_mensaje solo PREPARAN; lee el mensaje y pregunta "¿Lo envío?". Solo si el usuario dice que sí → confirmar_accion. Si dice que no → cancelar_accion. Nunca digas "enviado" antes de confirmar_accion.
 - Si el usuario adjunta un DOCUMENTO, contesta usando su contenido.
@@ -286,7 +288,7 @@ $rem
 
     /** Órdenes simples que no necesitan pensar: se ejecutan al instante. */
     private fun quickCommand(t: String): String? {
-        val x = java.text.Normalizer.normalize(t.lowercase(), java.text.Normalizer.Form.NFD).replace(Regex("\\p{M}"), "").trim().trimEnd('.', '!', '?')
+        val x = java.text.Normalizer.normalize(t.lowercase(), java.text.Normalizer.Form.NFD).replace(Regex("\\p{M}"), "").replace(Regex("[¿¡?!.,;:]"), " ").replace(Regex("\\s+"), " ").trim()
         val musicWord = Regex("\\b(musica|cancion|rola|poweramp|spotify)\\b").containsMatchIn(x)
         val own = music.ownActive()
         fun key(k: Int) = music.mediaKey(k)
@@ -303,6 +305,11 @@ $rem
             musicWord && Regex("^(reanuda|continua|sigue con|play|quita la pausa)").containsMatchIn(x) -> {
                 if (own) music.resume() else key(android.view.KeyEvent.KEYCODE_MEDIA_PLAY); "Reanudando."
             }
+            Regex("^(que hora es|que horas son|dime la hora|me dices la hora|hora|la hora|que hora tienes)( ahorita| ahora)?$").matches(x) ->
+                "Son las " + SimpleDateFormat("h:mm a", Locale("es", "MX")).format(Date()).replace("a. m.", "de la mañana").replace("p. m.", "de la tarde") + "."
+            Regex("^(que (dia|fecha) es( hoy)?|a que (dia|fecha) estamos|que fecha|fecha de hoy|dime la fecha|en que (dia|fecha) estamos)$").matches(x) ->
+                "Hoy es " + SimpleDateFormat("EEEE d 'de' MMMM 'de' yyyy", Locale("es", "MX")).format(Date()) + "."
+            Regex("^(cuanta bateria (tengo|tiene|me queda|queda)|bateria|nivel de bateria|como (esta|va) la bateria)$").matches(x) -> device.battery()
             Regex("^(prende|enciende) (la )?linterna$").matches(x) -> device.torch(true)
             Regex("^apaga (la )?linterna$").matches(x) -> device.torch(false)
             Regex("^sube(le)? (el )?volumen$").matches(x) -> "Volumen al ${music.setVolume(music.volume() + 15)}%."
