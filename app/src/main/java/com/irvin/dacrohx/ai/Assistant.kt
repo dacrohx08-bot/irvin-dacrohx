@@ -665,6 +665,8 @@ $rem
     }
 
     /** Respaldo: reconocimiento de voz de Android en modo offline. */
+    private var inAppRetries = 0
+
     private fun startRecognizer() {
         val ctx = getApplication<Application>()
         if (!SpeechRecognizer.isRecognitionAvailable(ctx)) { micBusy = false; toast("No hay reconocimiento de voz disponible."); return }
@@ -682,6 +684,16 @@ $rem
             override fun onBufferReceived(buffer: ByteArray?) {}
             override fun onEndOfSpeech() {}
             override fun onError(error: Int) {
+                if (error in retryable && _partialSpeech.value.isBlank() && inAppRetries < 2) {
+                    inAppRetries++
+                    try { sr.destroy() } catch (_: Exception) {}
+                    recognizer = null
+                    viewModelScope.launch { kotlinx.coroutines.delay(600L); micBusy = true; startRecognizer() }
+                    return
+                }
+                if (error in retryable && _partialSpeech.value.isBlank())
+                    store.addChat(ChatMsg(role = "sys", text = "🎙️ No pude abrir el micrófono (error $error). Toca el micrófono otra vez."))
+                inAppRetries = 0
                 val noOffline = error == SpeechRecognizer.ERROR_NETWORK || error == SpeechRecognizer.ERROR_NETWORK_TIMEOUT ||
                     error == SpeechRecognizer.ERROR_SERVER || error == 13 /* LANGUAGE_UNAVAILABLE */ || error == 12 /* LANGUAGE_NOT_SUPPORTED */
                 if (error == 13 && android.os.Build.VERSION.SDK_INT >= 33) {
@@ -702,6 +714,7 @@ $rem
                 finishRecognizer(null)
             }
             override fun onResults(results: Bundle?) {
+                inAppRetries = 0
                 val r = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
                 finishRecognizer(r?.takeIf { it.isNotBlank() } ?: _partialSpeech.value.takeIf { it.isNotBlank() })
             }
@@ -903,7 +916,7 @@ $rem
             if (text.isNullOrBlank()) {
                 if (fastVoiceBroken) { handsFreeTurn(); return }
                 misses++
-                if (misses >= 2 || turns > 1 && misses >= 1) { speaker.say("Ok, aquí estoy si me necesitas.", flush = true); return }
+                if (misses >= 2) { speaker.say("Ok, aquí estoy si me necesitas.", flush = true); return }
                 speaker.say("No te escuché, ¿me repites?", flush = true); waitSpeech()
                 continue
             }
@@ -911,6 +924,7 @@ $rem
             misses = 0
             val more = handsFreeText(text)
             if (!more) return
+            kotlinx.coroutines.delay(450) // deja que se libere el audio antes de volver a escuchar
         }
     }
 
@@ -919,13 +933,35 @@ $rem
         if (!voiceTurn || !expectsAnswer(reply)) { voiceTurn = false; return }
         viewModelScope.launch {
             waitSpeech()
-            if (_mode.value == Mode.IDLE && genJob?.isActive != true) toggleListening()
+            kotlinx.coroutines.delay(450)
+            if (genJob?.isActive != true && _mode.value != Mode.LISTENING) {
+                _mode.value = Mode.IDLE
+                inAppRetries = 0
+                toggleListening()
+            }
         }
     }
     @Volatile private var voiceTurn = false
     fun endVoiceTurn() { voiceTurn = false }
 
-    private suspend fun listenOnce(): String? = kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+    /** Errores de "no pude abrir el micrófono / reconocedor ocupado": vale la pena reintentar. */
+    private val retryable = setOf(SpeechRecognizer.ERROR_RECOGNIZER_BUSY, SpeechRecognizer.ERROR_CLIENT, 10, 11, SpeechRecognizer.ERROR_AUDIO)
+    @Volatile private var lastVoiceError = 0
+
+    /** Escucha una frase con reintentos si el reconocedor está ocupado. */
+    private suspend fun listenOnce(): String? {
+        repeat(3) { attempt ->
+            lastVoiceError = 0
+            val r = listenRaw()
+            if (!r.isNullOrBlank()) return r
+            if (lastVoiceError !in retryable) return null
+            kotlinx.coroutines.delay(500L + attempt * 400L)
+        }
+        if (lastVoiceError != 0) store.addChat(ChatMsg(role = "sys", text = "🎙️ No pude abrir el micrófono (error $lastVoiceError). Toca el micrófono para hablar."))
+        return null
+    }
+
+    private suspend fun listenRaw(): String? = kotlinx.coroutines.suspendCancellableCoroutine { cont ->
         val ctx = getApplication<Application>()
         val sr = if (SpeechRecognizer.isOnDeviceRecognitionAvailable(ctx)) SpeechRecognizer.createOnDeviceSpeechRecognizer(ctx)
         else SpeechRecognizer.createSpeechRecognizer(ctx)
@@ -944,6 +980,7 @@ $rem
             override fun onBufferReceived(buffer: ByteArray?) {}
             override fun onEndOfSpeech() {}
             override fun onError(error: Int) {
+                lastVoiceError = error
                 if (error == SpeechRecognizer.ERROR_NETWORK || error == SpeechRecognizer.ERROR_SERVER || error == 13 || error == 12) fastVoiceBroken = true
                 finish(lastPartial.takeIf { it.isNotBlank() })
             }
