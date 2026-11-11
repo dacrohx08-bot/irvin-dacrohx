@@ -159,6 +159,18 @@ class WakeWordService : Service() {
             ctx.stopService(Intent(ctx, WakeWordService::class.java))
         }
 
+        /** Formas en que el oído pequeño puede escribir "Oye Irvin" (solo se usan las que conoce). */
+        private val WAKE_PHRASES = listOf(
+            "oye irvin", "hey irvin", "oye ervin", "oye irving", "hey ervin",
+            "oye ir bien", "oye y bien", "hey ir bien", "oye y vino", "oye ir vino",
+        )
+
+        /** Gramática de palabra clave con las frases cuyas palabras existen en el modelo. */
+        fun grammarFor(model: Model): String? {
+            val ok = WAKE_PHRASES.filter { ph -> ph.split(" ").all { w -> try { model.findWord(w) >= 0 } catch (_: Throwable) { false } } }
+            if (ok.isEmpty()) return null
+            return (ok + listOf("oye", "hey", "[unk]")).joinToString(",", "[", "]") { "\"$it\"" }
+        }
         private val CALL = setOf("oye", "hey", "ey", "oie", "olle", "oi", "hoy", "ok")
         private val NAME = Regex("^(i|e|y|hi|he|hey)r?(v|b)i(e)?n(g|o)?")
         private val NAME_STRICT = Regex("^(i|e|hi|he)r(v|b)i(e)?n")
@@ -271,6 +283,8 @@ class WakeWordService : Service() {
             updateNotification("No pude cargar el modelo de voz.")
             return
         }
+        val grammar = grammarFor(model)
+        VoiceLog.add(if (grammar != null) "Oído en modo palabra clave: $grammar" else "Oído en modo libre")
         // Precarga el cerebro para responder al instante cuando lo llamen.
         withContext(Dispatchers.Main) { scope.launch(Dispatchers.Main) { assistant.ensureBrain() } }
         val rate = 16000
@@ -279,7 +293,10 @@ class WakeWordService : Service() {
                 // Si la app está usando el micrófono, espera.
                 while ((assistant.micHeld || assistant.mode.value != com.irvin.dacrohx.ai.Mode.IDLE) && scope.isActive) delay(300)
 
-                val rec = Recognizer(model, rate.toFloat())
+                // Modo "palabra clave": el oído solo compara contra estas frases, así detecta
+                // "Oye Irvin" mucho mejor con ruido o con voz bajita (y no se distrae con otras palabras).
+                val rec = try { grammar?.let { Recognizer(model, rate.toFloat(), it) } ?: Recognizer(model, rate.toFloat()) }
+                    catch (e: Exception) { Recognizer(model, rate.toFloat()) }
                 val min = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
                 val ar = try {
                     AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(min, 8192))

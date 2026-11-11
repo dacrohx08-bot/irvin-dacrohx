@@ -35,6 +35,8 @@ class VoiceRecorder {
 
     @Volatile private var vad = false
     @Volatile private var heardSpeech = false
+    @Volatile private var peak = 0f
+    @Volatile private var speechFloor = 0.012f
 
     /**
      * Empieza a grabar. Con [stopOnSilence] se detiene sola cuando terminas de hablar
@@ -63,6 +65,8 @@ class VoiceRecorder {
             var silenceMs = 0
             var totalMs = 0
             var noise = -1f
+            var loud = 0
+            peak = 0f
             while (running) {
                 val n = rec.read(buf, 0, buf.size)
                 if (n > 0) {
@@ -80,19 +84,28 @@ class VoiceRecorder {
                     val chunkMs = n * 1000 / (SAMPLE_RATE * 2)
                     totalMs += chunkMs
                     var autoStop = pcm.size() >= maxBytes
+                    if (lv > peak) peak = lv
                     if (vad) {
-                        // Mide el ruido de fondo (ventilador, ambiente) al inicio y se adapta.
-                        // Usa el nivel MÁS BAJO de los primeros 500 ms: así la cola del tono o el inicio de tu voz no lo inflan.
+                        // Mide el ruido de fondo con el nivel MÁS BAJO de los primeros 500 ms
+                        // (así la cola del tono o el inicio de tu voz no lo inflan).
                         if (totalMs in 101..500) noise = if (noise < 0f) lv else minOf(noise, lv)
-                        val base = noise.coerceAtLeast(0.01f)
-                        val talk = maxOf(0.045f, base * 2.6f)
-                        val quiet = maxOf(0.03f, base * 1.7f)
-                        if (lv > talk) { heardSpeech = true; silenceMs = 0 }
-                        else if (lv < quiet || !heardSpeech) silenceMs += chunkMs
-                        else silenceMs += chunkMs / 2
-                        if (heardSpeech && silenceMs >= 1000) autoStop = true
-                        if (!heardSpeech && totalMs >= 6000) autoStop = true
-                        if (totalMs >= 10000) autoStop = true
+                        val base = noise.coerceAtLeast(0.003f)
+                        // Umbrales bajos para cuarto silencioso (voz suave o lejos del teléfono)
+                        // y relativos al ruido cuando hay ruido de fondo.
+                        val talk = maxOf(0.012f, base * 2.2f)
+                        val quiet = maxOf(0.008f, base * 1.5f)
+                        if (lv > talk) {
+                            loud++
+                            if (loud >= 2) heardSpeech = true // 200 ms seguidos: voz, no un golpe
+                            silenceMs = 0
+                        } else {
+                            loud = 0
+                            if (lv < quiet || !heardSpeech) silenceMs += chunkMs else silenceMs += chunkMs / 2
+                        }
+                        speechFloor = talk
+                        if (heardSpeech && silenceMs >= 1100) autoStop = true
+                        if (!heardSpeech && totalMs >= 7000) autoStop = true
+                        if (totalMs >= 12000) autoStop = true
                     }
                     if (autoStop) {
                         running = false
@@ -116,11 +129,34 @@ class VoiceRecorder {
         _level.value = 0f
         val data = synchronized(pcm) { pcm.toByteArray() }
         if (data.size < SAMPLE_RATE * 2 / 2) return null // menos de medio segundo
-        if (vad && !heardSpeech) return null
-        return wav(data)
+        // Si no superó el umbral pero sí hubo algo parecido a voz, que Gemma decida (mejor que ignorarte).
+        if (vad && !heardSpeech && peak < speechFloor * 0.7f) return null
+        return wav(boost(data))
     }
 
     fun cancel() { stop() }
+
+    /** Sube el volumen de una voz bajita (hasta ×6) para que se entienda mejor, sin saturar. */
+    private fun boost(d: ByteArray): ByteArray {
+        var max = 1
+        var i = 0
+        while (i + 1 < d.size) {
+            val v = Math.abs(((d[i + 1].toInt() shl 8) or (d[i].toInt() and 0xff)).toShort().toInt())
+            if (v > max) max = v
+            i += 2
+        }
+        val gain = (20000f / max).coerceIn(1f, 6f)
+        if (gain < 1.2f) return d
+        val out = ByteArray(d.size)
+        i = 0
+        while (i + 1 < d.size) {
+            val v = ((d[i + 1].toInt() shl 8) or (d[i].toInt() and 0xff)).toShort().toInt()
+            val w = (v * gain).toInt().coerceIn(-32768, 32767)
+            out[i] = (w and 0xff).toByte(); out[i + 1] = (w shr 8 and 0xff).toByte()
+            i += 2
+        }
+        return out
+    }
 
     private fun wav(pcmData: ByteArray): ByteArray {
         val out = ByteArrayOutputStream(pcmData.size + 44)
