@@ -209,8 +209,8 @@ class Assistant private constructor(private val app: Application) {
     fun requestMusic(query: String, appName: String): String {
         val all = music.musicApps()
         fun appOf(id: String) = if (id == "irvin") null else all.firstOrNull { it.pkg == id }
-        val q = query.trim().ifEmpty { "lo que sea" }
-        val wanted = appName.trim().lowercase()
+        val q = query.trim().takeUnless { it.isEmpty() || it.equals("ninguno", true) || it.equals("ninguna", true) } ?: "lo que sea"
+        val wanted = appName.trim().lowercase().takeUnless { it == "ninguno" || it == "ninguna" || it == "vacio" || it == "vacío" } ?: ""
         if (wanted.isNotEmpty()) {
             if ("irvin" in wanted || "reproductor" in wanted || "tuyo" in wanted) return playMusic(q, null)
             val t = music.findApp(if (wanted == "premium") "youtube" else wanted)
@@ -391,6 +391,7 @@ Reglas:
 - Audio = el usuario hablándote; responde a lo que dijo. Imagen = analízala.
 - Sé PRECISO y DIRECTO. Nunca pidas que el usuario "sea más específico" en preguntas simples: responde con la interpretación más lógica. Solo pregunta si de verdad falta un dato indispensable (por ejemplo, la hora de un recordatorio).
 - Para la hora o la fecha exactas usa SIEMPRE fecha_hora_actual; no la adivines.
+- Si algo requiere una acción, usa la herramienta. NUNCA dejes un parámetro de texto vacío: si no hay valor usa "ninguno" (o "lo que sea" para la música).
 - Si algo requiere una acción, usa la herramienta. NUNCA digas que hiciste algo (poner música, guardar, programar, abrir) si no usaste la herramienta y esta no confirmó. Si no tienes herramienta para algo, dilo.
 - leer_notificaciones puede pedir una palabra clave: si responde CLAVE, pide al usuario "su palabra clave" (sin decir cuál es ni dar pistas) y vuelve a llamar con lo que diga. Nunca repitas la palabra clave.
 - Mensajes: enviar_sms y responder_mensaje solo PREPARAN; lee el mensaje y pregunta "¿Lo envío?". Solo si el usuario dice que sí → confirmar_accion. Si dice que no → cancelar_accion. Nunca digas "enviado" antes de confirmar_accion.
@@ -419,6 +420,40 @@ $rem
             conversationReady = true
         } catch (e: Throwable) {
             toast("No pude iniciar la conversación: ${e.message}")
+        }
+    }
+
+    /** Ejecuta la herramienta que el modelo quiso llamar cuando el motor no pudo leerla. */
+    private fun runToolFromError(err: String): String? {
+        val m = Regex("call:([a-z_]+)\\{(.*?)\\}").find(err) ?: return null
+        val name = m.groupValues[1]
+        val raw = m.groupValues[2]
+        val args = HashMap<String, String>()
+        Regex("([a-z_]+):<\\|\"\\|>(.*?)<\\|\"\\|>").findAll(raw).forEach { args[it.groupValues[1]] = it.groupValues[2] }
+        Regex("([a-z_]+):(-?[0-9.]+|true|false)(?=[,}]|$)").findAll(raw).forEach { args.putIfAbsent(it.groupValues[1], it.groupValues[2]) }
+        com.irvin.dacrohx.device.VoiceLog.add("Herramienta rescatada: $name $args")
+        val camel = name.split('_').mapIndexed { i, w -> if (i == 0) w else w.replaceFirstChar { it.uppercase() } }.joinToString("")
+        val t = tools()
+        val fn = t::class.members.firstOrNull { it.name == camel } as? kotlin.reflect.KFunction<*> ?: return null
+        return try {
+            val params = fn.parameters
+            val call = HashMap<kotlin.reflect.KParameter, Any?>()
+            params.forEach { p ->
+                if (p.kind == kotlin.reflect.KParameter.Kind.INSTANCE) { call[p] = t; return@forEach }
+                val key = p.name!!.replace(Regex("([A-Z])")) { "_" + it.value.lowercase() }
+                val v = args[key] ?: args[p.name!!] ?: ""
+                call[p] = when (p.type.classifier) {
+                    Int::class -> v.toDoubleOrNull()?.toInt() ?: 0
+                    Boolean::class -> v == "true"
+                    Double::class -> v.toDoubleOrNull() ?: 0.0
+                    else -> v
+                }
+            }
+            val r = fn.callBy(call)?.toString() ?: return null
+            r.removePrefix("PREGUNTA: ").substringBefore(" Haz esa pregunta").substringBefore(" NO digas").trim()
+        } catch (e: Throwable) {
+            com.irvin.dacrohx.device.VoiceLog.add("No pude rescatar la herramienta: ${e.message}")
+            null
         }
     }
 
@@ -598,6 +633,15 @@ $rem
                 }
             }
             attempt()
+            // El motor a veces no entiende la llamada a herramienta (p. ej. un texto vacío): la ejecutamos nosotros.
+            if (failed?.contains("parse tool call", ignoreCase = true) == true || failed?.contains("FC tool calls") == true) {
+                val r = runToolFromError(failed!!)
+                if (r != null) {
+                    failed = null
+                    sb.setLength(0); sb.append(r)
+                    if (autoSpeak) speaker.say(r, flush = true)
+                }
+            }
             // Si falló sin decir nada (p. ej. memoria llena), reinicia la conversación y reintenta una vez.
             if (failed != null && sb.isEmpty()) {
                 failed = null
@@ -672,7 +716,13 @@ $rem
         com.irvin.dacrohx.device.VoiceLog.add("Oído de Gemma: " + (if (wav == null) "no se escuchó voz" else "audio de " + ((wav.size - 44) / 32000) + " s"))
         if (wav == null) { toast("No te escuché."); endVoiceTurn(); return }
         voiceTurn = true
-        sendVoice(wav)
+        viewModelScope.launch {
+            _mode.value = Mode.THINKING
+            val heard = try { brain.transcribe(wav) } catch (e: Throwable) { com.irvin.dacrohx.device.VoiceLog.add("Transcripción falló: ${e.message}"); null }
+            _mode.value = Mode.IDLE
+            com.irvin.dacrohx.device.VoiceLog.add("Oído de Gemma entendió: \"" + (heard ?: "") + "\"")
+            if (heard != null) { holdMic(60_000); sendText(heard) } else sendVoice(wav)
+        }
     }
 
     /** Respaldo: reconocimiento de voz de Android en modo offline. */
@@ -881,7 +931,11 @@ $rem
         if (wav != null) playEnd()
         recorder.onAutoStop = { viewModelScope.launch { stopListeningAndSend() } }
         _mode.value = Mode.IDLE
-        if (wav == null) { micBusy = false; return }
+        if (wav == null) { micBusy = false; speaker.say("No te escuché.", flush = true); return false }
+        // Primero convierte tu voz en texto (así funcionan las órdenes rápidas y ves lo que dijiste).
+        val heard = try { brain.transcribe(wav) } catch (e: Throwable) { com.irvin.dacrohx.device.VoiceLog.add("Transcripción falló: ${e.message}"); null }
+        com.irvin.dacrohx.device.VoiceLog.add("Oído de Gemma entendió: \"" + (heard ?: "") + "\"")
+        if (heard != null) { micBusy = false; return handsFreeText(heard) }
         val reply = sendVoice(wav, forceSpeak = true)
         reply?.join()
         // espera a que termine de hablar

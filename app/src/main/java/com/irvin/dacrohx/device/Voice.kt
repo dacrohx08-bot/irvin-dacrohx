@@ -63,6 +63,7 @@ class VoiceRecorder {
             val maxBytes = SAMPLE_RATE * 2 * (if (vad) 15 else MAX_SECONDS)
             var silenceMs = 0
             var totalMs = 0
+            var noise = -1f
             while (running) {
                 val n = rec.read(buf, 0, buf.size)
                 if (n > 0) {
@@ -81,9 +82,17 @@ class VoiceRecorder {
                     totalMs += chunkMs
                     var autoStop = pcm.size() >= maxBytes
                     if (vad) {
-                        if (lv > 0.05f) { heardSpeech = true; silenceMs = 0 } else silenceMs += chunkMs
-                        if (heardSpeech && silenceMs >= 1900) autoStop = true
-                        if (!heardSpeech && totalMs >= 7000) autoStop = true
+                        // Mide el ruido de fondo (ventilador, ambiente) al inicio y se adapta.
+                        if (totalMs <= 400) noise = if (noise < 0f) lv else (noise * 0.7f + lv * 0.3f)
+                        val base = noise.coerceAtLeast(0.01f)
+                        val talk = maxOf(0.045f, base * 2.6f)
+                        val quiet = maxOf(0.03f, base * 1.7f)
+                        if (lv > talk) { heardSpeech = true; silenceMs = 0 }
+                        else if (lv < quiet || !heardSpeech) silenceMs += chunkMs
+                        else silenceMs += chunkMs / 2
+                        if (heardSpeech && silenceMs >= 1100) autoStop = true
+                        if (!heardSpeech && totalMs >= 6000) autoStop = true
+                        if (totalMs >= 12000) autoStop = true
                     }
                     if (autoStop) {
                         running = false

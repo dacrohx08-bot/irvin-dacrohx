@@ -134,6 +134,29 @@ class Brain(private val ctx: Context) {
             .flowOn(dispatcher)
     }
 
+    /** Convierte tu audio en texto con el oído de Gemma (conversación aparte, sin herramientas). */
+    suspend fun transcribe(wav: ByteArray): String? = withContext(dispatcher) {
+        val e = engine ?: return@withContext null
+        val conv = e.createConversation(
+            ConversationConfig(
+                systemInstruction = Contents.of(
+                    "Eres un transcriptor. Escribe exactamente lo que dice la persona en el audio, en español, " +
+                        "con buena ortografía. Solo el texto, sin comillas ni comentarios. Si no se entiende nada, responde: (silencio)"
+                ),
+                samplerConfig = SamplerConfig(topK = 1, topP = 1.0, temperature = 0.0),
+                thinkingConfig = com.google.ai.edge.litertlm.ThinkingConfig(enableThinking = false, thinkingTokenBudget = 0),
+            )
+        )
+        try {
+            val sb = StringBuilder()
+            conv.sendMessageAsync(Contents.of(listOf(Content.AudioBytes(wav), Content.Text("Transcribe el audio."))), mapOf("enable_thinking" to false))
+                .collect { sb.append(it.toString()) }
+            sb.toString().trim().trim('"', '“', '”').takeIf { it.isNotBlank() && !it.contains("(silencio)") }
+        } finally {
+            try { conv.close() } catch (_: Throwable) {}
+        }
+    }
+
     /** Cuántos tokens lleva la conversación (para reiniciarla antes de que se llene). */
     suspend fun tokenCount(): Int = withContext(dispatcher) {
         try { conversation?.getTokenCount() ?: 0 } catch (_: Throwable) { 0 }
