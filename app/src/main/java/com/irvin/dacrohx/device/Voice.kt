@@ -179,6 +179,9 @@ class Speaker(ctx: Context) {
                 }
                 loadVoices()
                 if (wantedVoice.isNotEmpty()) setVoice(wantedVoice)
+                // Dice lo que quedó pendiente mientras la voz arrancaba.
+                val queued = synchronized(early) { early.toList().also { early.clear() } }
+                queued.forEach { say(it) }
             }
         }
         tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
@@ -210,8 +213,14 @@ class Speaker(ctx: Context) {
         }
         .trim()
 
+    private val early = ArrayList<String>()
+
     fun say(text: String, flush: Boolean = false) {
-        if (!ready) return
+        if (!ready) {
+            synchronized(early) { if (flush) early.clear(); early += text }
+            _speaking.value = true // para que quien espere sepa que hay algo por decir
+            return
+        }
         val t = clean(text)
         if (t.isEmpty()) return
         tts.setSpeechRate(rate)

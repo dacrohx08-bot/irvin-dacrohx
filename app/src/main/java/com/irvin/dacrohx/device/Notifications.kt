@@ -41,6 +41,15 @@ class NotifListener : NotificationListenerService() {
             return flat.split(":").any { it == me }
         }
 
+        /** Último mensaje detectado y qué hizo Irvin (para diagnóstico en Ajustes). */
+        @Volatile var lastEvent: String = "Todavía no ha llegado ningún mensaje desde que se abrió Irvin."
+
+        /** Pide a Android que vuelva a conectar el lector de notificaciones (tras actualizar la app). */
+        fun rebind(ctx: Context) {
+            if (!enabled(ctx)) return
+            try { requestRebind(ComponentName(ctx, NotifListener::class.java)) } catch (_: Exception) {}
+        }
+
         fun openSettings(ctx: Context) {
             ctx.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }
@@ -117,6 +126,13 @@ class NotifListener : NotificationListenerService() {
             while (items.size > 80) items.removeFirst()
         }
         // Aviso por voz de mensajes nuevos (solo los que llegan en este momento).
+        val hora = java.text.SimpleDateFormat("h:mm a", java.util.Locale("es", "MX")).format(java.util.Date())
+        if (isMsg) lastEvent = "$hora · $app · " + when {
+            !isNew -> "repetido, ignorado"
+            System.currentTimeMillis() - sbn.postTime >= 60_000 -> "viejo, ignorado"
+            System.currentTimeMillis() - connectedAt <= 3000 -> "al conectar, ignorado"
+            else -> "detectado"
+        }
         if (isNew && isMsg && System.currentTimeMillis() - sbn.postTime < 60_000 && connectedAt > 0 &&
             System.currentTimeMillis() - connectedAt > 3000
         ) {

@@ -1046,6 +1046,26 @@ private fun AnnouncePanel(vm: Assistant) {
             }
             Switch(st.discreetAnnounce, { v -> vm.store.updateSettings { it.copy(discreetAnnounce = v) } }, colors = SwitchDefaults.colors(checkedTrackColor = C.Red))
         }
+        Spacer(Modifier.height(12.dp))
+        var tick by remember { mutableIntStateOf(0) }
+        LaunchedEffect(tick) { }
+        Text(
+            if (!notifOk) "⚠️ Irvin no tiene acceso a notificaciones" else if (com.irvin.dacrohx.device.NotifListener.connected) "● Lector de notificaciones conectado" else "○ Lector de notificaciones desconectado",
+            color = if (notifOk && com.irvin.dacrohx.device.NotifListener.connected) C.Ok else C.Warn, fontSize = 13.sp,
+        )
+        Text("Último mensaje: " + com.irvin.dacrohx.device.NotifListener.lastEvent + if (tick < 0) "" else "", color = C.Mut, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
+        Row(Modifier.padding(top = 6.dp)) {
+            OutlinedButton(onClick = {
+                if (!protected || !st.announceMsgs) { vm.toast("Guarda tu palabra secreta y prende los avisos primero."); return@OutlinedButton }
+                vm.testAnnouncement(); tick++
+            }) { Text("Probar aviso") }
+            Spacer(Modifier.width(8.dp))
+            OutlinedButton(onClick = {
+                if (!notifOk) com.irvin.dacrohx.device.NotifListener.openSettings(ctx)
+                else { com.irvin.dacrohx.device.NotifListener.rebind(ctx); vm.toast("Reconectando el lector…") }
+                tick++
+            }) { Text(if (notifOk) "Reconectar" else "Dar acceso") }
+        }
         Text(
             "Tip: activa también “Bloquear con huella” en Seguridad, así nadie puede abrir Irvin ni cambiar tu palabra.",
             color = C.Mut, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp),

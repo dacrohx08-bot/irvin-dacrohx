@@ -132,14 +132,17 @@ class Assistant private constructor(private val app: Application) {
 
     fun onIncomingMessage(item: com.irvin.dacrohx.device.NotifListener.Item) {
         val st = store.settings.value
-        if (!st.announceMsgs || st.secretWord.isBlank()) return
+        fun log(r: String) { com.irvin.dacrohx.device.NotifListener.lastEvent += " → $r" }
+        if (!st.announceMsgs) return log("avisos apagados")
+        if (st.secretWord.isBlank()) return log("falta palabra secreta")
         val am = app.getSystemService(android.media.AudioManager::class.java)
-        if (am.mode == android.media.AudioManager.MODE_IN_CALL || am.mode == android.media.AudioManager.MODE_IN_COMMUNICATION) return
+        if (am.mode == android.media.AudioManager.MODE_IN_CALL || am.mode == android.media.AudioManager.MODE_IN_COMMUNICATION) return log("en llamada, no se avisa")
         // Evita repetir el aviso si la misma persona manda varios mensajes seguidos.
         val key = item.pkg + "|" + item.title
         val now = System.currentTimeMillis()
-        if (key == lastAnnounceKey && now - lastAnnounceAt < 45_000) { lastAnnounced = item; return }
-        if (genJob?.isActive == true || _mode.value == Mode.LISTENING || announceJob?.isActive == true) { lastAnnounced = item; return }
+        if (key == lastAnnounceKey && now - lastAnnounceAt < 45_000) { lastAnnounced = item; return log("misma persona hace poco, no repito") }
+        if (genJob?.isActive == true || _mode.value == Mode.LISTENING || announceJob?.isActive == true) { lastAnnounced = item; return log("estaba ocupado") }
+        log("anunciado ✓")
         lastAnnounceKey = key; lastAnnounceAt = now; lastAnnounced = item
         val who = if (st.discreetAnnounce) "" else " de ${item.title}"
         val via = if (st.discreetAnnounce) "" else " por ${item.app}"
@@ -160,6 +163,17 @@ class Assistant private constructor(private val app: Application) {
             playEnd()
             answerAnnouncement(answer)
         }
+    }
+
+    /** Botón "Probar aviso" en Ajustes: simula que llegó un mensaje. */
+    fun testAnnouncement() {
+        lastAnnounceKey = ""
+        onIncomingMessage(
+            com.irvin.dacrohx.device.NotifListener.Item(
+                "prueba", "irvin.prueba", "Prueba", "Irvin", "Este es un mensaje de prueba. Si lo escuchas, todo funciona.",
+                System.currentTimeMillis(), null, true,
+            )
+        )
     }
 
     /** Respuesta a "¿Quieres que lo lea?". Con palabra secreta, solo la palabra correcta lo lee. */
@@ -311,6 +325,7 @@ class Assistant private constructor(private val app: Application) {
             models.state.collect { if (it is ModelState.Ready && brain.state.value is BrainState.Off) bootBrain() }
         }
         ReminderScheduler.rescheduleAll(app)
+        com.irvin.dacrohx.device.NotifListener.rebind(app)
         val nm = app.getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
             android.app.NotificationChannel(CH_REPLY, "Respuestas de Irvin", NotificationManager.IMPORTANCE_DEFAULT)
