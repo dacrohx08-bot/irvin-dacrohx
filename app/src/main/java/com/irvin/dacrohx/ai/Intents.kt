@@ -262,7 +262,7 @@ class Intents(private val a: Assistant) {
 
     // ------------------------------------------------------------------ clima
     private suspend fun weather(s: String): String? {
-        val m = Regex("^(?:(?:como|que tal) (?:esta|estara|va a estar) |dime |cual es |que )?(?:el )?(?:clima|tiempo|temperatura)(?: hace)?(?: hoy| de hoy| ahorita| ahora| para hoy)?(?: (?:en|de) (.+))?$").find(s)
+        val m = Regex("^(?:(?:como|que tal)(?: esta| estara| va a estar)? |dime |cual es |que )?(?:el )?(?:clima|tiempo|temperatura)(?: hace)?(?: hoy| de hoy| ahorita| ahora| para hoy)?(?: (?:en|de) (.+))?$").find(s)
             ?: Regex("^(?:va a llover|llovera|hace frio|hace calor|que temperatura hace|cuantos grados hace|a cuantos grados estamos)(?: hoy| ahorita| manana)?(?: en (.+))?$").find(s)
             ?: return null
         if (!a.store.settings.value.useInternet) return null
