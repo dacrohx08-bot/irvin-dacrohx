@@ -76,6 +76,10 @@ dependencies {
     // Cerebro offline: LiteRT-LM (Gemma 4 en el teléfono)
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.18.1")
     implementation("org.jetbrains.kotlin:kotlin-reflect:2.4.0")
+
+    // Oído offline para "Oye Irvin"
+    implementation("com.alphacephei:vosk-android:0.3.75@aar")
+    implementation("net.java.dev.jna:jna:5.18.1@aar")
 }
 
 configurations.all {

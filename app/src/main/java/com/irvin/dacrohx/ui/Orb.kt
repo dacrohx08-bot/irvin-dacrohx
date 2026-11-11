@@ -1,5 +1,7 @@
 package com.irvin.dacrohx.ui
 
+import com.irvin.dacrohx.ai.Mode
+
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat

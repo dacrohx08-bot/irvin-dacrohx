@@ -38,6 +38,7 @@ data class Settings(
     val autoSpeak: Boolean = true,
     val speechRate: Float = 1.05f,
     val tvBrand: String = "samsung",
+    val wakeWord: Boolean = false,
 )
 
 val PERSONAS = listOf(
@@ -146,6 +147,7 @@ class Store private constructor(private val ctx: Context) {
             .putBoolean("autoSpeak", s.autoSpeak)
             .putFloat("speechRate", s.speechRate)
             .putString("tvBrand", s.tvBrand)
+            .putBoolean("wakeWord", s.wakeWord)
             .apply()
     }
 
@@ -155,6 +157,7 @@ class Store private constructor(private val ctx: Context) {
         autoSpeak = prefs.getBoolean("autoSpeak", true),
         speechRate = prefs.getFloat("speechRate", 1.05f),
         tvBrand = prefs.getString("tvBrand", "samsung") ?: "samsung",
+        wakeWord = prefs.getBoolean("wakeWord", false),
     )
 
     // ---------------- persistencia JSON ----------------

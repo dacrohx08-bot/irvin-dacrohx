@@ -1,5 +1,8 @@
 package com.irvin.dacrohx.ui
 
+import com.irvin.dacrohx.ai.Assistant
+import com.irvin.dacrohx.ai.Mode
+
 import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
 import android.net.Uri
@@ -133,7 +136,7 @@ enum class Tab(val label: String, val icon: ImageVector) {
 
 // =====================================================================================
 @Composable
-fun IrvinRoot(vm: MainViewModel) {
+fun IrvinRoot(vm: Assistant) {
     val modelState by vm.models.state.collectAsState()
     val toast by vm.toast.collectAsState()
 
@@ -154,7 +157,7 @@ fun IrvinRoot(vm: MainViewModel) {
 
 // =====================================================================================
 @Composable
-fun SetupScreen(vm: MainViewModel, state: ModelState) {
+fun SetupScreen(vm: Assistant, state: ModelState) {
     val scope = rememberCoroutineScope()
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) scope.launch { vm.models.importFrom(uri) }
@@ -221,7 +224,7 @@ private fun Progress(done: Long, total: Long, label: String) {
 
 // =====================================================================================
 @Composable
-fun MainShell(vm: MainViewModel) {
+fun MainShell(vm: Assistant) {
     var tab by remember { mutableStateOf(Tab.CHAT) }
     val mode by vm.mode.collectAsState()
     val brain by vm.brain.state.collectAsState()
@@ -316,7 +319,7 @@ private val SUGGESTIONS = listOf(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun ChatScreen(vm: MainViewModel, mode: Mode, brain: BrainState) {
+fun ChatScreen(vm: Assistant, mode: Mode, brain: BrainState) {
     val chat by vm.store.chat.collectAsState()
     val settings by vm.store.settings.collectAsState()
     val image by vm.pendingImage.collectAsState()
@@ -545,7 +548,7 @@ private fun TypingDots() {
 
 // =====================================================================================
 @Composable
-fun MemoryScreen(vm: MainViewModel) {
+fun MemoryScreen(vm: Assistant) {
     val memories by vm.store.memories.collectAsState()
     var input by remember { mutableStateOf("") }
     Column(Modifier.fillMaxSize().padding(14.dp)) {
@@ -569,7 +572,7 @@ fun MemoryScreen(vm: MainViewModel) {
 // =====================================================================================
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun RemindersScreen(vm: MainViewModel) {
+fun RemindersScreen(vm: Assistant) {
     val reminders by vm.store.reminders.collectAsState()
     var text by remember { mutableStateOf("") }
     var due by remember { mutableLongStateOf(System.currentTimeMillis() + 3_600_000L) }
@@ -650,7 +653,7 @@ fun RemindersScreen(vm: MainViewModel) {
 // =====================================================================================
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun ControlScreen(vm: MainViewModel) {
+fun ControlScreen(vm: Assistant) {
     val settings by vm.store.settings.collectAsState()
     var torch by remember { mutableStateOf(false) }
     var battery by remember { mutableStateOf(vm.device.battery()) }
@@ -733,7 +736,7 @@ private fun RemoteBtn(label: String, big: Boolean = false, red: Boolean = false,
 // =====================================================================================
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun SettingsScreen(vm: MainViewModel, brain: BrainState) {
+fun SettingsScreen(vm: Assistant, brain: BrainState) {
     val s by vm.store.settings.collectAsState()
     var confirmClear by remember { mutableStateOf(false) }
     var confirmModel by remember { mutableStateOf(false) }
@@ -765,6 +768,9 @@ fun SettingsScreen(vm: MainViewModel, brain: BrainState) {
             )
             Text("Si no escuchas nada, instala la voz en español: Ajustes de Android → Accesibilidad → Salida de texto a voz.", color = C.Mut, fontSize = 12.sp)
         }
+
+        Label("Manos libres · “Oye Irvin”")
+        WakePanel(vm, s.wakeWord)
 
         Label("Cerebro")
         Panel {
@@ -799,6 +805,51 @@ fun SettingsScreen(vm: MainViewModel, brain: BrainState) {
     if (confirmClear) Confirm("¿Borrar toda la conversación? Tus recuerdos y recordatorios se quedan.", { confirmClear = false }) { vm.newChat() }
     if (confirmModel) Confirm("¿Borrar el modelo (3.7 GB)? Tendrás que descargarlo otra vez.", { confirmModel = false }) {
         vm.deleteModel()
+    }
+}
+
+@Composable
+private fun WakePanel(vm: Assistant, enabled: Boolean) {
+    val ctx = LocalContext.current
+    val wakeState by vm.wake.state.collectAsState()
+    val running by com.irvin.dacrohx.device.WakeWordService.running.collectAsState()
+    Panel {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Escuchar “Oye Irvin”", color = C.Txt, fontSize = 16.sp)
+                Text(
+                    when {
+                        wakeState is com.irvin.dacrohx.device.WakeModel.State.Downloading ->
+                            "Descargando oído… ${(wakeState as com.irvin.dacrohx.device.WakeModel.State.Downloading).pct}%"
+                        wakeState is com.irvin.dacrohx.device.WakeModel.State.Unpacking -> "Instalando oído…"
+                        wakeState is com.irvin.dacrohx.device.WakeModel.State.Failed ->
+                            (wakeState as com.irvin.dacrohx.device.WakeModel.State.Failed).reason
+                        enabled && running -> "Activo · funciona con la pantalla apagada"
+                        enabled -> "Activado (se inicia al abrir la app)"
+                        else -> "Apagado"
+                    },
+                    color = if (enabled && running) C.Ok else C.Mut, fontSize = 13.sp,
+                )
+            }
+            Switch(enabled, { vm.setWakeWord(it) }, colors = SwitchDefaults.colors(checkedTrackColor = C.Red))
+        }
+        Text(
+            "Mientras está activo verás una notificación fija y el punto verde del micrófono. " +
+                "Después de reiniciar el teléfono, abre Irvin una vez para reactivarlo.",
+            color = C.Mut, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp),
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(
+            onClick = {
+                try {
+                    ctx.startActivity(
+                        android.content.Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                            .setData(android.net.Uri.parse("package:" + ctx.packageName))
+                    )
+                } catch (e: Exception) { vm.toast("Abre Ajustes → Batería y quita la optimización a Irvin.") }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("Que RedMagic no lo apague (batería)") }
     }
 }
 

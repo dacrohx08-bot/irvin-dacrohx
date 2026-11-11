@@ -34,9 +34,18 @@ class VoiceRecorder {
 
     val isRecording: Boolean get() = running
 
+    @Volatile private var vad = false
+    @Volatile private var heardSpeech = false
+
+    /**
+     * Empieza a grabar. Con [stopOnSilence] se detiene sola cuando terminas de hablar
+     * (o a los 6 s si no dijiste nada), ideal para el modo manos libres.
+     */
     @SuppressLint("MissingPermission")
-    fun start(): Boolean {
+    fun start(stopOnSilence: Boolean = false): Boolean {
         if (running) return true
+        vad = stopOnSilence
+        heardSpeech = false
         val min = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val rec = try {
             AudioRecord(
@@ -51,7 +60,9 @@ class VoiceRecorder {
         rec.startRecording()
         thread = Thread {
             val buf = ByteArray(3200) // 100 ms
-            val maxBytes = SAMPLE_RATE * 2 * MAX_SECONDS
+            val maxBytes = SAMPLE_RATE * 2 * (if (vad) 15 else MAX_SECONDS)
+            var silenceMs = 0
+            var totalMs = 0
             while (running) {
                 val n = rec.read(buf, 0, buf.size)
                 if (n > 0) {
@@ -64,8 +75,17 @@ class VoiceRecorder {
                         i += 2
                     }
                     val rms = sqrt(sum / (n / 2).coerceAtLeast(1))
-                    _level.value = (rms / 6000.0).toFloat().coerceIn(0f, 1f)
-                    if (pcm.size() >= maxBytes) {
+                    val lv = (rms / 6000.0).toFloat().coerceIn(0f, 1f)
+                    _level.value = lv
+                    val chunkMs = n * 1000 / (SAMPLE_RATE * 2)
+                    totalMs += chunkMs
+                    var autoStop = pcm.size() >= maxBytes
+                    if (vad) {
+                        if (lv > 0.09f) { heardSpeech = true; silenceMs = 0 } else silenceMs += chunkMs
+                        if (heardSpeech && silenceMs >= 1300) autoStop = true
+                        if (!heardSpeech && totalMs >= 6000) autoStop = true
+                    }
+                    if (autoStop) {
                         running = false
                         onAutoStop?.invoke()
                     }
@@ -78,13 +98,16 @@ class VoiceRecorder {
     /** Detiene y devuelve el audio como WAV (o null si fue demasiado corto). */
     fun stop(): ByteArray? {
         running = false
-        try { thread?.join(500) } catch (_: Exception) {}
+        if (Thread.currentThread() !== thread) {
+            try { thread?.join(500) } catch (_: Exception) {}
+        }
         try { record?.stop() } catch (_: Exception) {}
         record?.release()
         record = null
         _level.value = 0f
         val data = synchronized(pcm) { pcm.toByteArray() }
         if (data.size < SAMPLE_RATE * 2 / 2) return null // menos de medio segundo
+        if (vad && !heardSpeech) return null
         return wav(data)
     }
 

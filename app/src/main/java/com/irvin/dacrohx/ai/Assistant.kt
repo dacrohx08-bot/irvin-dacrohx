@@ -1,4 +1,4 @@
-package com.irvin.dacrohx.ui
+package com.irvin.dacrohx.ai
 
 import android.app.Application
 import android.content.Intent
@@ -7,14 +7,11 @@ import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
-import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.viewModelScope
+import android.app.NotificationManager
+import android.content.Context
+import androidx.core.app.NotificationCompat
+import com.irvin.dacrohx.R
 import com.google.ai.edge.litertlm.Content
-import com.irvin.dacrohx.ai.Brain
-import com.irvin.dacrohx.ai.BrainState
-import com.irvin.dacrohx.ai.IrvinTools
-import com.irvin.dacrohx.ai.ModelManager
-import com.irvin.dacrohx.ai.ModelState
 import com.irvin.dacrohx.data.ChatMsg
 import com.irvin.dacrohx.data.Store
 import com.irvin.dacrohx.device.DeviceActions
@@ -22,7 +19,12 @@ import com.irvin.dacrohx.device.IrBlaster
 import com.irvin.dacrohx.device.ReminderScheduler
 import com.irvin.dacrohx.device.Speaker
 import com.irvin.dacrohx.device.VoiceRecorder
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -36,7 +38,29 @@ import java.util.Locale
 
 enum class Mode { IDLE, LISTENING, THINKING, SPEAKING }
 
-class MainViewModel(app: Application) : AndroidViewModel(app) {
+/**
+ * El núcleo de Irvin. Vive una sola vez por proceso y lo comparten la pantalla
+ * y el servicio de "Oye Irvin", así el cerebro no se carga dos veces.
+ */
+class Assistant private constructor(private val app: Application) {
+
+    companion object {
+        @Volatile private var instance: Assistant? = null
+        fun get(ctx: Context): Assistant = instance ?: synchronized(this) {
+            instance ?: Assistant(ctx.applicationContext as Application).also { instance = it }
+        }
+        const val CH_REPLY = "respuestas_v1"
+    }
+
+    val viewModelScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private fun <T : Application> getApplication(): T {
+        @Suppress("UNCHECKED_CAST")
+        return app as T
+    }
+
+    /** true mientras la app o la conversación por voz usan el micrófono. */
+    @Volatile var micBusy = false
+        private set
 
     val store = Store.get(app)
     val models = ModelManager(app)
@@ -45,6 +69,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val ir = IrBlaster(app)
     val speaker = Speaker(app)
     val recorder = VoiceRecorder()
+    val wake = com.irvin.dacrohx.device.WakeModel(app)
 
     private val _mode = MutableStateFlow(Mode.IDLE)
     val mode: StateFlow<Mode> = _mode.asStateFlow()
@@ -60,6 +85,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     val micLevel get() = recorder.level
 
+    @Volatile private var conversationReady = false
     private var genJob: Job? = null
     private var currentReplyId: String? = null
     private var recognizer: SpeechRecognizer? = null
@@ -73,10 +99,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         viewModelScope.launch { models.watchDownload() }
+        viewModelScope.launch { wake.watch() }
         viewModelScope.launch {
             models.state.collect { if (it is ModelState.Ready && brain.state.value is BrainState.Off) bootBrain() }
         }
         ReminderScheduler.rescheduleAll(app)
+        val nm = app.getSystemService(NotificationManager::class.java)
+        nm.createNotificationChannel(
+            android.app.NotificationChannel(CH_REPLY, "Respuestas de Irvin", NotificationManager.IMPORTANCE_DEFAULT)
+        )
     }
 
     fun toast(msg: String) { _toast.value = msg }
@@ -139,6 +170,7 @@ $rem
             .dropWhile { it.first != "user" }
         try {
             brain.newConversation(systemPrompt(), history, tools())
+            conversationReady = true
         } catch (e: Throwable) {
             toast("No pude iniciar la conversación: ${e.message}")
         }
@@ -173,26 +205,26 @@ $rem
         run(userMsg, parts)
     }
 
-    private fun sendVoice(wav: ByteArray) {
-        if (!brain.audioEnabled) { toast("El audio no está disponible en este modo."); return }
+    private fun sendVoice(wav: ByteArray, forceSpeak: Boolean = false): Job? {
+        if (!brain.audioEnabled) { toast("El audio no está disponible en este modo."); return null }
         val secs = (wav.size - 44) / (VoiceRecorder.SAMPLE_RATE * 2)
         val parts = listOf(
             Content.AudioBytes(wav),
             Content.Text("${stamp()} (Mensaje de voz del usuario. Responde a lo que dijo.)"),
         )
-        run(ChatMsg(role = "user", text = "🎙️ Mensaje de voz · ${secs.coerceAtLeast(1)} s", kind = "voice"), parts)
+        return run(ChatMsg(role = "user", text = "🎙️ Mensaje de voz · ${secs.coerceAtLeast(1)} s", kind = "voice"), parts, forceSpeak)
     }
 
-    private fun run(userMsg: ChatMsg, parts: List<Content>) {
-        if (!brain.ready) { toast("El cerebro todavía se está cargando…"); return }
-        if (genJob?.isActive == true) return
+    private fun run(userMsg: ChatMsg, parts: List<Content>, forceSpeak: Boolean = false): Job? {
+        if (!brain.ready) { toast("El cerebro todavía se está cargando…"); return null }
+        if (genJob?.isActive == true) return null
         speaker.stop()
         store.addChat(userMsg)
         val reply = ChatMsg(role = "model", text = "", pending = true)
         store.addChat(reply)
         currentReplyId = reply.id
         _mode.value = Mode.THINKING
-        val autoSpeak = store.settings.value.autoSpeak
+        val autoSpeak = forceSpeak || store.settings.value.autoSpeak
         speaker.rate = store.settings.value.speechRate
         genJob = viewModelScope.launch {
             val sb = StringBuilder()
@@ -220,9 +252,11 @@ $rem
                 }
             }
             if (autoSpeak && failed == null) speaker.finish()
+            lastReplyText = if (failed == null) finalText else null
             currentReplyId = null
             _mode.value = if (speaker.speaking.value) Mode.SPEAKING else Mode.IDLE
         }
+        return genJob
     }
 
     fun stopAll() {
@@ -230,6 +264,7 @@ $rem
         genJob?.cancel()
         speaker.stop()
         if (recorder.isRecording) recorder.cancel()
+        micBusy = false
         _mode.value = Mode.IDLE
     }
 
@@ -244,6 +279,7 @@ $rem
         if (_mode.value == Mode.THINKING) return
         speaker.stop()
         if (brain.audioEnabled) {
+            micBusy = true
             if (recorder.start()) _mode.value = Mode.LISTENING
             else toast("No pude usar el micrófono.")
         } else {
@@ -255,6 +291,7 @@ $rem
         if (recognizer != null) { recognizer?.stopListening(); return }
         if (!recorder.isRecording && _mode.value != Mode.LISTENING) return
         val wav = recorder.stop()
+        micBusy = false
         _mode.value = Mode.IDLE
         if (wav == null) { toast("No te escuché, mantén el micrófono un poco más."); return }
         sendVoice(wav)
@@ -341,11 +378,92 @@ $rem
         models.deleteModel()
     }
 
-    override fun onCleared() {
-        stopAll()
-        speaker.shutdown()
-        recognizer?.destroy()
-        viewModelScope.launch { brain.close() }
-        super.onCleared()
+    // ------------------------------------------------------------------ manos libres ("Oye Irvin")
+    fun setWakeWord(on: Boolean) {
+        if (on && !wake.isReady()) {
+            wake.start()
+            viewModelScope.launch {
+                wake.watch()
+                if (wake.isReady()) setWakeWord(true)
+            }
+            toast("Descargando el oído de Irvin (40 MB)…")
+            return
+        }
+        store.updateSettings { it.copy(wakeWord = on) }
+        if (on) {
+            try { com.irvin.dacrohx.device.WakeWordService.start(app); toast("Listo: di “Oye Irvin”.") }
+            catch (e: Exception) { toast("No pude activar la escucha: ${e.message}") }
+        } else com.irvin.dacrohx.device.WakeWordService.stop(app)
+    }
+
+    /** Espera a que el cerebro esté listo (lo carga si hace falta). */
+    suspend fun ensureBrain(): Boolean {
+        if (brain.ready) return true
+        if (!models.isReady()) return false
+        if (brain.state.value is BrainState.Off || brain.state.value is BrainState.Error) bootBrain()
+        val s = brain.state.first { it is BrainState.Ready || it is BrainState.Error }
+        if (s is BrainState.Ready) {
+            // espera a que exista la conversación
+            var tries = 0
+            while (!conversationReady && tries++ < 50) kotlinx.coroutines.delay(100)
+        }
+        return brain.ready
+    }
+
+    /**
+     * Turno completo manos libres: escucha el comando (se detiene sola con el silencio),
+     * lo manda al cerebro y responde en voz alta. Devuelve cuando terminó de hablar.
+     */
+    suspend fun handsFreeTurn() {
+        if (!ensureBrain()) {
+            speaker.say("Todavía no tengo cerebro instalado. Abre la app primero.", flush = true)
+            return
+        }
+        if (genJob?.isActive == true || _mode.value == Mode.LISTENING) return
+        speaker.stop()
+        micBusy = true
+        val done = CompletableDeferred<ByteArray?>()
+        recorder.onAutoStop = { done.complete(recorder.stop()) }
+        if (!recorder.start(stopOnSilence = true)) {
+            micBusy = false
+            recorder.onAutoStop = { viewModelScope.launch { stopListeningAndSend() } }
+            return
+        }
+        _mode.value = Mode.LISTENING
+        val wav = done.await()
+        recorder.onAutoStop = { viewModelScope.launch { stopListeningAndSend() } }
+        _mode.value = Mode.IDLE
+        if (wav == null) { micBusy = false; return }
+        val reply = sendVoice(wav, forceSpeak = true)
+        reply?.join()
+        // espera a que termine de hablar
+        kotlinx.coroutines.delay(300)
+        speaker.speaking.first { !it }
+        micBusy = false
+        lastReplyText?.let { notifyReply(it) }
+    }
+
+    @Volatile private var lastReplyText: String? = null
+
+    private fun notifyReply(text: String) {
+        try {
+            val nm = app.getSystemService(NotificationManager::class.java)
+            val open = android.app.PendingIntent.getActivity(
+                app, 3, Intent(app, com.irvin.dacrohx.MainActivity::class.java),
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            )
+            nm.notify(
+                7001,
+                NotificationCompat.Builder(app, CH_REPLY)
+                    .setSmallIcon(R.drawable.ic_mic)
+                    .setContentTitle("Irvin Dacrohx")
+                    .setContentText(text)
+                    .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+                    .setColor(0xFFFF2340.toInt())
+                    .setAutoCancel(true)
+                    .setContentIntent(open)
+                    .build()
+            )
+        } catch (_: Exception) {}
     }
 }
