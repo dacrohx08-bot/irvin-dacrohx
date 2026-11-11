@@ -76,7 +76,7 @@ class Assistant private constructor(private val app: Application) {
     val phone = com.irvin.dacrohx.device.Phone(app)
     val sounds = com.irvin.dacrohx.device.Sounds(app)
     fun playWake() = sounds.wake(store.settings.value.wakeSound)
-    private fun playEnd() = sounds.end(store.settings.value.wakeSound != "ninguno")
+    private fun playEnd() = sounds.end(store.settings.value.wakeSound)
     val cloud = com.irvin.dacrohx.device.Cloud(store)
 
     // ---------------- acciones que requieren confirmación (enviar mensajes)

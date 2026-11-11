@@ -1303,12 +1303,15 @@ private fun WakePanel(vm: Assistant, enabled: Boolean) {
         Spacer(Modifier.height(10.dp))
         val st by vm.store.settings.collectAsState()
         Text("Sonido de activación (toca para escucharlo):", color = C.Mut, fontSize = 13.sp)
-        @OptIn(ExperimentalLayoutApi::class)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 6.dp)) {
-            vm.sounds.options.forEach { o ->
-                Chip(o.label, selected = st.wakeSound == o.id) {
-                    vm.store.updateSettings { it.copy(wakeSound = o.id) }
-                    vm.sounds.wake(o.id)
+        listOf("Asistente" to "Estilo asistente · suaves y cortos", "Gamer" to "Estilo gamer · potentes", "Otro" to "").forEach { (g, title) ->
+            if (title.isNotEmpty()) Text(title, color = C.Red2, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
+            @OptIn(ExperimentalLayoutApi::class)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 6.dp)) {
+                vm.sounds.options.filter { it.group == g }.forEach { o ->
+                    Chip(o.label, selected = st.wakeSound == o.id) {
+                        vm.store.updateSettings { it.copy(wakeSound = o.id) }
+                        vm.sounds.wake(o.id)
+                    }
                 }
             }
         }

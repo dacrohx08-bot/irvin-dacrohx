@@ -328,7 +328,7 @@ class WakeWordService : Service() {
                         if (now - t0 > 15000) { command = partial; break }
                     }
                     if (command.isEmpty()) command = JSONObject(rec.finalResult).optString("text").trim()
-                    if (command.isNotEmpty()) assistant.sounds.end(assistant.store.settings.value.wakeSound != "ninguno")
+                    if (command.isNotEmpty()) assistant.sounds.end(assistant.store.settings.value.wakeSound)
                 }
                 try { ar.stop() } catch (_: Exception) {}
                 ar.release()
