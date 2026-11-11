@@ -133,8 +133,33 @@ class Assistant private constructor(private val app: Application) {
 
     /** ¿La frase contiene la palabra secreta? (tolerante a acentos y mayúsculas) */
     fun secretOk(said: String): Boolean {
-        val sec = nrm(store.settings.value.secretWord)
-        return sec.isEmpty() || nrm(said).contains(sec)
+        val sec = nrm(store.settings.value.secretWord).replace(" ", "")
+        if (sec.isEmpty()) return true
+        // Sin espacios: "irvin 08" = "irvin08". Tolera UNA letra mal oída si la palabra es larga.
+        val got = nrm(said).replace(" ", "")
+        if (got.contains(sec)) return true
+        if (sec.length < 6 || got.length < sec.length - 1) return false
+        for (len in (sec.length - 1)..(sec.length + 1)) {
+            var i = 0
+            while (i + len <= got.length) {
+                if (editDistance(got.substring(i, i + len), sec) <= 1) return true
+                i++
+            }
+        }
+        return false
+    }
+
+    private fun editDistance(a: String, b: String): Int {
+        val d = IntArray(b.length + 1) { it }
+        for (i in 1..a.length) {
+            var prev = d[0]; d[0] = i
+            for (j in 1..b.length) {
+                val tmp = d[j]
+                d[j] = minOf(d[j] + 1, d[j - 1] + 1, prev + if (a[i - 1] == b[j - 1]) 0 else 1)
+                prev = tmp
+            }
+        }
+        return d[b.length]
     }
     val hasSecret: Boolean get() = store.settings.value.secretWord.isNotBlank()
 
@@ -165,7 +190,7 @@ class Assistant private constructor(private val app: Application) {
             if (!canListen) return@launch
             holdMic(40_000)
             val answer = try { hear() } finally { releaseMic() }
-            if (answer.isNullOrBlank()) return@launch
+            if (answer.isNullOrBlank()) { com.irvin.dacrohx.device.VoiceLog.add("Aviso: no escuché respuesta"); return@launch }
             playEnd()
             answerAnnouncement(answer)
         }
@@ -190,8 +215,12 @@ class Assistant private constructor(private val app: Application) {
         if (no) { speaker.say("Ok.", flush = true); lastAnnounced = null; return true }
         val yes = Regex("\\b(si|claro|dale|va|ok|leelo|lee|leemelo|adelante|simon|sale|por favor)\\b").containsMatchIn(x)
         // Solo la palabra secreta lo lee. Cualquier otra respuesta: "De acuerdo", sin pistas.
-        if (hasSecret && secretOk(said)) { readMessages(item); return true }
-        if (yes) { speaker.say("De acuerdo.", flush = true); lastAnnounced = null; return true }
+        if (hasSecret && secretOk(said)) { com.irvin.dacrohx.device.VoiceLog.add("Aviso: palabra correcta → leo"); readMessages(item); return true }
+        if (yes) {
+            com.irvin.dacrohx.device.VoiceLog.add("Aviso: dijiste sí pero sin la palabra secreta → no leo")
+            // No se borra el aviso: si en 2 minutos dices tu palabra, lo lee.
+            speaker.say("De acuerdo.", flush = true); return true
+        }
         return false
     }
 
@@ -470,6 +499,12 @@ $rem
         // Respuesta a "¿Quieres que lo lea?" (dentro de 2 minutos del aviso).
         if (lastAnnounced != null && System.currentTimeMillis() - lastAnnounceAt < 120_000) {
             if (answerAnnouncement(t)) return "\u200B"
+        }
+        // Decir tu palabra secreta en cualquier momento lee el último mensaje (de los últimos 30 min).
+        if (hasSecret && x.split(" ").size <= 6 && secretOk(t)) {
+            val last = com.irvin.dacrohx.device.NotifListener.recent("todas", 20)
+                .firstOrNull { it.isMessage && System.currentTimeMillis() - it.time < 30 * 60_000 }
+            if (last != null) { readMessages(last); return "\u200B" }
         }
         // Respuesta a "¿Lo envío?" de un mensaje preparado: sí / no al instante.
         if (_pending.value != null) {
