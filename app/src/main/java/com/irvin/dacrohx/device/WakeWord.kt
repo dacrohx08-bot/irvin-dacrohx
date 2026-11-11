@@ -275,6 +275,8 @@ class WakeWordService : Service() {
             updateNotification("No pude cargar el modelo de voz.")
             return
         }
+        // Precarga el cerebro para responder al instante cuando lo llamen.
+        withContext(Dispatchers.Main) { scope.launch(Dispatchers.Main) { assistant.ensureBrain() } }
         val rate = 16000
         try {
             while (scope.isActive) {

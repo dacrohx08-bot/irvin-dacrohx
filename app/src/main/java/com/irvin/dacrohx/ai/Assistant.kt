@@ -415,6 +415,7 @@ $rem
      * lo manda al cerebro y responde en voz alta. Devuelve cuando terminó de hablar.
      */
     suspend fun handsFreeTurn() {
+        if (!brain.ready && models.isReady()) speaker.say("Dame un segundo, estoy despertando.", flush = true)
         if (!ensureBrain()) {
             speaker.say("Todavía no tengo cerebro instalado. Abre la app primero.", flush = true)
             return
