@@ -166,11 +166,51 @@ class WakeWordService : Service() {
         )
 
         /** Gramática de palabra clave con las frases cuyas palabras existen en el modelo. */
-        fun grammarFor(model: Model): String? {
-            val ok = WAKE_PHRASES.filter { ph -> ph.split(" ").all { w -> try { model.findWord(w) >= 0 } catch (_: Throwable) { false } } }
-            if (ok.isEmpty()) return null
-            return (ok + listOf("oye", "hey", "[unk]")).joinToString(",", "[", "]") { "\"$it\"" }
+        fun grammarFor(ctx: Context, dir: File): String? {
+            val prefs = ctx.getSharedPreferences("irvin_wake", Context.MODE_PRIVATE)
+            val cached = prefs.getString("grammar_v1", null)
+            if (cached != null) return cached.ifEmpty { null }
+            val needed = WAKE_PHRASES.flatMap { it.split(" ") }.toSet()
+            val known = try { knownWords(dir, needed) } catch (_: Throwable) { emptySet() }
+            val ok = WAKE_PHRASES.filter { ph -> ph.split(" ").all { it in known } }
+            val g = if (ok.isEmpty()) "" else (ok + listOf("oye", "hey", "[unk]")).joinToString(",", "[", "]") { "\"$it\"" }
+            prefs.edit().putString("grammar_v1", g).apply()
+            return g.ifEmpty { null }
         }
+
+        /** Busca qué palabras conoce el modelo (en words.txt o en la tabla de símbolos del grafo). */
+        private fun knownWords(dir: File, words: Set<String>): Set<String> {
+            val txt = File(dir, "graph/words.txt")
+            if (txt.exists()) {
+                val found = HashSet<String>()
+                txt.forEachLine { l -> val w = l.substringBefore(' '); if (w in words) found += w }
+                return found
+            }
+            val fst = listOf("graph/Gr.fst", "graph/HCLG.fst").map { File(dir, it) }.firstOrNull { it.exists() } ?: return emptySet()
+            val data = fst.readBytes()
+            return words.filter { w ->
+                val b = w.toByteArray()
+                // En la tabla de símbolos cada palabra va precedida de su largo (int32 little endian).
+                val pat = byteArrayOf(b.size.toByte(), 0, 0, 0) + b
+                indexOf(data, pat) >= 0
+            }.toSet()
+        }
+
+        private fun indexOf(data: ByteArray, pat: ByteArray): Int {
+            val first = pat[0]
+            var i = 0
+            val last = data.size - pat.size
+            while (i <= last) {
+                if (data[i] == first) {
+                    var j = 1
+                    while (j < pat.size && data[i + j] == pat[j]) j++
+                    if (j == pat.size) return i
+                }
+                i++
+            }
+            return -1
+        }
+
         private val CALL = setOf("oye", "hey", "ey", "oie", "olle", "oi", "hoy", "ok")
         private val NAME = Regex("^(i|e|y|hi|he|hey)r?(v|b)i(e)?n(g|o)?")
         private val NAME_STRICT = Regex("^(i|e|hi|he)r(v|b)i(e)?n")
@@ -283,7 +323,7 @@ class WakeWordService : Service() {
             updateNotification("No pude cargar el modelo de voz.")
             return
         }
-        val grammar = grammarFor(model)
+        val grammar = grammarFor(this, wm.dir)
         VoiceLog.add(if (grammar != null) "Oído en modo palabra clave: $grammar" else "Oído en modo libre")
         // Precarga el cerebro para responder al instante cuando lo llamen.
         withContext(Dispatchers.Main) { scope.launch(Dispatchers.Main) { assistant.ensureBrain() } }
