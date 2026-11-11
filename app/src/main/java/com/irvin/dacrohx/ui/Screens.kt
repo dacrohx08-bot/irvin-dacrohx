@@ -1300,6 +1300,18 @@ private fun WakePanel(vm: Assistant, enabled: Boolean) {
             }
             Switch(enabled, { vm.setWakeWord(it) }, colors = SwitchDefaults.colors(checkedTrackColor = C.Red))
         }
+        Spacer(Modifier.height(10.dp))
+        val st by vm.store.settings.collectAsState()
+        Text("Sonido de activación (toca para escucharlo):", color = C.Mut, fontSize = 13.sp)
+        @OptIn(ExperimentalLayoutApi::class)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 6.dp)) {
+            vm.sounds.options.forEach { o ->
+                Chip(o.label, selected = st.wakeSound == o.id) {
+                    vm.store.updateSettings { it.copy(wakeSound = o.id) }
+                    vm.sounds.wake(o.id)
+                }
+            }
+        }
         Text(
             "Mientras está activo verás una notificación fija y el punto verde del micrófono. " +
                 "Después de reiniciar el teléfono, abre Irvin una vez para reactivarlo.",

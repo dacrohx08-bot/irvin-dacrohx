@@ -74,6 +74,9 @@ class Assistant private constructor(private val app: Application) {
     val online = com.irvin.dacrohx.device.Online(app)
     val updater = com.irvin.dacrohx.device.Updater(app)
     val phone = com.irvin.dacrohx.device.Phone(app)
+    val sounds = com.irvin.dacrohx.device.Sounds(app)
+    fun playWake() = sounds.wake(store.settings.value.wakeSound)
+    private fun playEnd() = sounds.end(store.settings.value.wakeSound != "ninguno")
     val cloud = com.irvin.dacrohx.device.Cloud(store)
 
     // ---------------- acciones que requieren confirmación (enviar mensajes)
@@ -474,6 +477,7 @@ $rem
         speaker.stop()
         val ctx = getApplication<Application>()
         val fast = store.settings.value.fastVoice && !fastVoiceBroken && SpeechRecognizer.isRecognitionAvailable(ctx)
+        playWake()
         if (fast || !brain.audioEnabled) {
             micBusy = true
             startRecognizer()
@@ -492,6 +496,7 @@ $rem
         val wav = recorder.stop()
         micBusy = false
         _mode.value = Mode.IDLE
+        playEnd()
         if (wav == null) { toast("No te escuché, mantén el micrófono un poco más."); return }
         sendVoice(wav)
     }
@@ -545,6 +550,7 @@ $rem
     }
 
     private fun finishRecognizer(text: String?) {
+        if (!text.isNullOrBlank()) playEnd()
         recognizer?.destroy()
         recognizer = null
         micBusy = false
@@ -650,6 +656,7 @@ $rem
         }
         _mode.value = Mode.LISTENING
         val wav = done.await()
+        if (wav != null) playEnd()
         recorder.onAutoStop = { viewModelScope.launch { stopListeningAndSend() } }
         _mode.value = Mode.IDLE
         if (wav == null) { micBusy = false; return }
@@ -690,9 +697,11 @@ $rem
     suspend fun quickVoiceTurn() {
         val ctx = getApplication<Application>()
         if (store.settings.value.fastVoice && !fastVoiceBroken && SpeechRecognizer.isRecognitionAvailable(ctx)) {
+            playWake()
             _mode.value = Mode.LISTENING
             micBusy = true
             val text = listenOnce()
+            if (!text.isNullOrBlank()) playEnd()
             micBusy = false
             _mode.value = Mode.IDLE
             if (!text.isNullOrBlank()) handsFreeText(text) else if (!fastVoiceBroken) toast("No te escuché.")

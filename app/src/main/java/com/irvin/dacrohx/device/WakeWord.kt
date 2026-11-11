@@ -254,11 +254,7 @@ class WakeWordService : Service() {
     }
 
     private fun beep() {
-        try {
-            val tg = ToneGenerator(AudioManager.STREAM_MUSIC, 80)
-            tg.startTone(ToneGenerator.TONE_PROP_BEEP2, 180)
-            scope.launch { delay(400); tg.release() }
-        } catch (_: Exception) {}
+        try { Assistant.get(this).playWake() } catch (_: Exception) {}
     }
 
     @SuppressLint("MissingPermission")
@@ -332,6 +328,7 @@ class WakeWordService : Service() {
                         if (now - t0 > 15000) { command = partial; break }
                     }
                     if (command.isEmpty()) command = JSONObject(rec.finalResult).optString("text").trim()
+                    if (command.isNotEmpty()) assistant.sounds.end(assistant.store.settings.value.wakeSound != "ninguno")
                 }
                 try { ar.stop() } catch (_: Exception) {}
                 ar.release()

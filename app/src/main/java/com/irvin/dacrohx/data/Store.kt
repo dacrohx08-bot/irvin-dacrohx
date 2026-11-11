@@ -49,6 +49,7 @@ data class Settings(
     val cloudKey: String = "",
     val cloudModel: String = "claude-sonnet-5-5",
     val musicApp: String = "", // "" = preguntar siempre, "irvin" = reproductor propio, o paquete de la app
+    val wakeSound: String = "nucleo",
 )
 
 val PERSONAS = listOf(
@@ -168,6 +169,7 @@ class Store private constructor(private val ctx: Context) {
             .putString("cloudKey", s.cloudKey)
             .putString("cloudModel", s.cloudModel)
             .putString("musicApp", s.musicApp)
+            .putString("wakeSound", s.wakeSound)
             .apply()
     }
 
@@ -188,6 +190,7 @@ class Store private constructor(private val ctx: Context) {
         cloudKey = prefs.getString("cloudKey", "") ?: "",
         cloudModel = prefs.getString("cloudModel", "claude-sonnet-5-5") ?: "claude-sonnet-5-5",
         musicApp = prefs.getString("musicApp", "") ?: "",
+        wakeSound = prefs.getString("wakeSound", "nucleo") ?: "nucleo",
     )
 
     // ---------------- persistencia JSON ----------------
