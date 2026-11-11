@@ -13,13 +13,19 @@ class Sounds(ctx: Context) {
     val options = listOf(
         Option("nucleo", "Núcleo", R.raw.wake_nucleo),
         Option("cyber", "Cyber", R.raw.wake_cyber),
-        Option("arranque", "Arranque", R.raw.wake_arranque),
+        Option("arranque", "Arranque Pro", R.raw.wake_arranque),
+        Option("hiperespacio", "Hiperespacio", R.raw.wake_hiperespacio),
+        Option("holograma", "Holograma", R.raw.wake_holograma),
+        Option("turbo", "Turbo", R.raw.wake_turbo),
+        Option("escudo", "Escudo", R.raw.wake_escudo),
+        Option("neon", "Neón", R.raw.wake_neon),
+        Option("glitch", "Glitch", R.raw.wake_glitch),
         Option("pulso", "Pulso", R.raw.wake_pulso),
         Option("ninguno", "Sin sonido", 0),
     )
 
     private val pool = SoundPool.Builder()
-        .setMaxStreams(2)
+        .setMaxStreams(3)
         .setAudioAttributes(
             AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build()
